@@ -520,6 +520,46 @@ class Provider::OpenaiTest < ActiveSupport::TestCase
       "the rejected field from the provider body must be captured for diagnosis"
   end
 
+  test "generic follow-up echoes Gemini's thought signature on the replayed tool_call" do
+    provider = Provider::Openai.new(
+      "test-token",
+      uri_base: "https://generativelanguage.googleapis.com/v1beta/openai",
+      model: "models/gemini-3.1-flash-lite"
+    )
+
+    payload = provider.send(
+      :build_generic_messages,
+      prompt: "What are my recent transactions?",
+      function_results: [ {
+        call_id: "call_1",
+        name: "get_transactions",
+        arguments: "{}",
+        output: "[]",
+        thought_signature: "SIG_ABC"
+      } ]
+    )
+
+    assistant = payload.find { |m| m[:role] == "assistant" && m[:tool_calls] }
+    assert assistant, "expected an assistant message carrying tool_calls"
+    assert_equal(
+      { google: { thought_signature: "SIG_ABC" } },
+      assistant[:tool_calls].first[:extra_content]
+    )
+  end
+
+  test "generic follow-up omits extra_content when there is no thought signature" do
+    provider = Provider::Openai.new("test-token", uri_base: "https://custom/v1", model: "m")
+
+    payload = provider.send(
+      :build_generic_messages,
+      prompt: "hi",
+      function_results: [ { call_id: "c1", name: "f", arguments: "{}", output: "[]" } ]
+    )
+
+    assistant = payload.find { |m| m[:role] == "assistant" && m[:tool_calls] }
+    assert_nil assistant[:tool_calls].first[:extra_content]
+  end
+
   test "build_input no longer accepts inline messages history" do
     config = Provider::Openai::ChatConfig.new(functions: [], function_results: [])
     # Positive control: prompt works

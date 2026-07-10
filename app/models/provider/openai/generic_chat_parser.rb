@@ -53,7 +53,11 @@ class Provider::Openai::GenericChatParser
           id: tool_call.dig("id"),
           call_id: tool_call.dig("id"),
           function_name: tool_call.dig("function", "name"),
-          function_args: tool_call.dig("function", "arguments")
+          function_args: tool_call.dig("function", "arguments"),
+          # Gemini (OpenAI-compat) returns its reasoning signature here and
+          # requires it echoed back on the replayed tool_call, or the follow-up
+          # request 400s with "Function call is missing a thought_signature".
+          thought_signature: tool_call.dig("extra_content", "google", "thought_signature")
         )
       end
     end

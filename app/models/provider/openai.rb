@@ -536,7 +536,7 @@ class Provider::Openai < Provider
           arguments = fn_result[:arguments]
           arguments_str = arguments.is_a?(String) ? arguments : arguments.to_json
 
-          {
+          call = {
             id: fn_result[:call_id],
             type: "function",
             function: {
@@ -544,6 +544,15 @@ class Provider::Openai < Provider
               arguments: arguments_str
             }
           }
+
+          # Echo the provider's reasoning signature back on the replayed tool_call.
+          # Gemini's OpenAI-compat layer requires this or rejects the follow-up
+          # with 400 "Function call is missing a thought_signature".
+          if fn_result[:thought_signature].present?
+            call[:extra_content] = { google: { thought_signature: fn_result[:thought_signature] } }
+          end
+
+          call
         end
 
         payload << {

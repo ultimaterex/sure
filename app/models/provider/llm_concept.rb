@@ -32,7 +32,15 @@ module Provider::LlmConcept
   ChatMessage = Data.define(:id, :output_text)
   ChatStreamChunk = Data.define(:type, :data, :usage)
   ChatResponse = Data.define(:id, :model, :messages, :function_requests)
-  ChatFunctionRequest = Data.define(:id, :call_id, :function_name, :function_args)
+  # `thought_signature` carries provider-specific reasoning state that must be
+  # echoed back on follow-up requests (Gemini via the OpenAI-compat layer requires
+  # it on replayed tool_calls or returns 400 "missing thought_signature"). It
+  # defaults to nil so providers that don't use it construct requests unchanged.
+  ChatFunctionRequest = Data.define(:id, :call_id, :function_name, :function_args, :thought_signature) do
+    def initialize(id:, call_id:, function_name:, function_args:, thought_signature: nil)
+      super
+    end
+  end
 
   def chat_response(
     prompt,
