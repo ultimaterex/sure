@@ -674,6 +674,17 @@ class Provider::Openai < Provider
         # Extract HTTP status code if available from the error
         http_status_code = extract_http_status_code(error)
 
+        # Surface the provider's actual response body. For 4xx errors the body
+        # names the exact rejected field (e.g. an OpenAI-only parameter the
+        # endpoint doesn't accept), which the bare Faraday message omits.
+        provider_response_body = safe_error_body(error)
+        if provider_response_body.present?
+          Rails.logger.error(
+            "LLM provider rejected request (status #{http_status_code}) for model #{model}. " \
+            "Provider response body: #{provider_response_body}"
+          )
+        end
+
         inferred_provider = LlmUsage.infer_provider(model)
         family.llm_usages.create!(
           provider: inferred_provider,
@@ -685,8 +696,9 @@ class Provider::Openai < Provider
           estimated_cost: nil,
           metadata: {
             error: safe_error_message(error),
-            http_status_code: http_status_code
-          }
+            http_status_code: http_status_code,
+            provider_response_body: provider_response_body
+          }.compact
         )
 
         Rails.logger.info("Failed LLM usage recorded successfully - Status: #{http_status_code}")
@@ -757,6 +769,26 @@ class Provider::Openai < Provider
       error&.message
     rescue => e
       "(message unavailable: #{e.class})"
+    end
+
+    # Extracts the raw provider response body from an error, for diagnostics.
+    # Handles Faraday errors (raw, pre-transform) whose `response` is a Hash with
+    # a `:body`, and already-transformed Provider::Error whose `details` carries
+    # the same body. Returns a truncated string, or nil when unavailable.
+    def safe_error_body(error)
+      body =
+        if error.respond_to?(:response) && error.response.is_a?(Hash)
+          error.response[:body]
+        elsif error.respond_to?(:details)
+          error.details
+        end
+
+      return nil if body.blank?
+
+      body = body.to_json unless body.is_a?(String)
+      body.truncate(4000)
+    rescue => e
+      "(body unavailable: #{e.class})"
     end
 
     # Builds a useful error message when the OpenAI Responses stream ended

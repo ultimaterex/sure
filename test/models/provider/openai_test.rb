@@ -493,6 +493,33 @@ class Provider::OpenaiTest < ActiveSupport::TestCase
     assert_match(/stream ended without a completion event/i, response.error.message)
   end
 
+  test "failed request records the provider response body for diagnostics" do
+    family = families(:dylan_family)
+    provider = Provider::Openai.new(
+      "test-token",
+      uri_base: "https://generativelanguage.googleapis.com/v1beta/openai",
+      model: "models/gemini-3.1-flash-lite"
+    )
+
+    body = { "error" => { "code" => 400, "message" => 'Unknown name "reasoning_effort": Cannot find field.' } }
+    fake_client = mock
+    fake_client.stubs(:chat).raises(
+      Faraday::BadRequestError.new("the server responded with status 400", { status: 400, body: body })
+    )
+    provider.stubs(:client).returns(fake_client)
+
+    response = provider.chat_response("hi", model: "models/gemini-3.1-flash-lite", family: family)
+
+    assert_not response.success?
+    assert_kind_of Provider::Openai::Error, response.error
+
+    usage = family.llm_usages.order(:created_at).last
+    assert_not_nil usage, "a failed llm_usage row should be recorded"
+    assert_equal 400, usage.metadata["http_status_code"]
+    assert_includes usage.metadata["provider_response_body"], "reasoning_effort",
+      "the rejected field from the provider body must be captured for diagnosis"
+  end
+
   test "build_input no longer accepts inline messages history" do
     config = Provider::Openai::ChatConfig.new(functions: [], function_results: [])
     # Positive control: prompt works
