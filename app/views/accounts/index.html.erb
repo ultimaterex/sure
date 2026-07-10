@@ -85,6 +85,10 @@
       <%= render @questrade_items.sort_by(&:created_at) %>
     <% end %>
 
+    <% if @wise_items.any? %>
+  <%= render @wise_items.sort_by(&:created_at) %>
+<% end %>
+
     <% if @manual_accounts.any? %>
       <div id="manual-accounts">
         <%= render "accounts/index/manual_accounts", accounts: @manual_accounts %>

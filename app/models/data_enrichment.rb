@@ -18,5 +18,5 @@ class DataEnrichment < ApplicationRecord
     sophtron: "sophtron",
     ibkr: "ibkr",
     questrade: "questrade"
-  }
+  , wise: "wise"}
 end

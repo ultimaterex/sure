@@ -264,7 +264,8 @@ class Settings::ProvidersController < ApplicationController
       # Load all provider configurations (exclude family-scoped panels, which have their own UI below)
       Provider::Factory.ensure_adapters_loaded
       @provider_configurations = Provider::ConfigurationRegistry.all.reject do |config|
-        FAMILY_PANEL_KEYS.any? { |key| config.provider_key.to_s.casecmp(key).zero? }
+        FAMILY_PANEL_KEYS.any? { |key| config.provider_key.to_s.casecmp(key).zero? } || \
+        config.provider_key.to_s.casecmp("wise").zero?
       end
 
       @akahu_items = Current.family.akahu_items.active.ordered
@@ -285,6 +286,7 @@ class Settings::ProvidersController < ApplicationController
       @binance_items = Current.family.binance_items.active.ordered
       @kraken_items = Current.family.kraken_items.active.ordered
       @questrade_items = Current.family.questrade_items.active.ordered.select(:id)
+      @wise_items = Current.family.wise_items.ordered.select(:id)
 
       @provider_sync_health = compute_provider_sync_health(family_panel_items)
 
