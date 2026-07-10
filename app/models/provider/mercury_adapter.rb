@@ -6,9 +6,11 @@ class Provider::MercuryAdapter < Provider::Base
   Provider::Factory.register("MercuryAccount", self)
 
   # Define which account types this provider supports
-  # Mercury is primarily a business banking provider with checking/savings accounts
+  # Mercury offers business checking/savings (Depository) and the Mercury IO
+  # credit card (CreditCard). Credit balances are handled by
+  # MercuryAccount::Processor, which negates Mercury's owed-as-positive balance.
   def self.supported_account_types
-    %w[Depository]
+    %w[Depository CreditCard]
   end
 
   # Returns connection configurations for this provider

@@ -7,6 +7,10 @@ class Provider::MercuryAdapterTest < ActiveSupport::TestCase
     assert_includes Provider::MercuryAdapter.supported_account_types, "Depository"
   end
 
+  test "supports CreditCard accounts" do
+    assert_includes Provider::MercuryAdapter.supported_account_types, "CreditCard"
+  end
+
   test "does not support Investment accounts" do
     assert_not_includes Provider::MercuryAdapter.supported_account_types, "Investment"
   end

@@ -46,6 +46,38 @@ class MercuryEntry::ProcessorTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
+  # credit card sign conversion — identical to depository (no inversion for liabilities)
+  # A charge leaves Mercury as a negative amount and must land as a positive
+  # outflow; a payment leaves as positive and must land as a negative inflow.
+  # ---------------------------------------------------------------------------
+
+  test "credit card charge (negative Mercury amount) imports as positive outflow" do
+    credit = link_credit_account
+
+    MercuryEntry::Processor.new(
+      tx(id: "charge", amount: -99.99, status: "sent"), mercury_account: credit[:mercury_account]
+    ).process
+
+    entry = credit[:account].entries.find_by(external_id: "mercury_charge", source: "mercury")
+    assert entry
+    assert entry.amount.positive?, "a credit card charge must be a positive outflow"
+    assert_in_delta 99.99, entry.amount.to_f, 0.01
+  end
+
+  test "credit card payment (positive Mercury amount) imports as negative inflow" do
+    credit = link_credit_account
+
+    MercuryEntry::Processor.new(
+      tx(id: "payment", amount: 500.00, status: "sent"), mercury_account: credit[:mercury_account]
+    ).process
+
+    entry = credit[:account].entries.find_by(external_id: "mercury_payment", source: "mercury")
+    assert entry
+    assert entry.amount.negative?, "a credit card payment must be a negative inflow"
+    assert_in_delta(-500.0, entry.amount.to_f, 0.01)
+  end
+
+  # ---------------------------------------------------------------------------
   # name resolution
   # ---------------------------------------------------------------------------
 
@@ -181,6 +213,18 @@ class MercuryEntry::ProcessorTest < ActiveSupport::TestCase
 
     def process(transaction_data)
       MercuryEntry::Processor.new(transaction_data, mercury_account: @mercury_account).process
+    end
+
+    # Build a CreditCard Sure account linked to a fresh mercury_account.
+    def link_credit_account
+      account = @family.accounts.create!(
+        name: "Mercury Credit", balance: 0, currency: "USD", accountable: CreditCard.new
+      )
+      mercury_account = @item.mercury_accounts.create!(
+        name: "Mercury Credit", account_id: "acc_credit", currency: "USD", current_balance: 0
+      )
+      AccountProvider.create!(provider: mercury_account, account: account)
+      { account: account, mercury_account: mercury_account }
     end
 
     def tx(
