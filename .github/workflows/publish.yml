@@ -2,12 +2,15 @@
 
 # Conditions for pushing the image to GHCR:
 #   - Triggered by push to default branch (`main`)
+#   - Triggered by push to a `feat/**` or `fix/**` branch (tagged with the
+#     slugified branch name, e.g. `feat/mercury-x` -> `:feat-mercury-x`)
 #   - Triggered by push to a version tag (`v*`)
 #   - Triggered by a scheduled run
 #   - Triggered manually via `workflow_dispatch` with `push: true`
+#     (builds the `ref` input and tags it with that branch's name)
 #
 # Conditional expression:
-#   github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || github.event.inputs.push
+#   github.event_name == 'push' || github.event_name == 'schedule' || github.event.inputs.push
 
 name: Publish Docker image
 
@@ -29,6 +32,8 @@ on:
       - 'v*'
     branches:
       - main
+      - 'feat/**'
+      - 'fix/**'
     paths-ignore:
       - 'charts/**'
       - 'mobile/**'
@@ -91,8 +96,22 @@ jobs:
       - name: Configure image tags
         id: tag_config
         shell: bash
+        env:
+          INPUT_REF: ${{ github.event.inputs.ref }}
         run: |
           BASE_CONFIG="type=sha,format=long"
+
+          # Work out which branch we're actually building, so both a branch push
+          # and a manual workflow_dispatch (which builds INPUT_REF while
+          # GITHUB_REF points at the workflow source, e.g. main) yield a
+          # branch-named tag such as feat/mercury-x -> :feat-mercury-x.
+          BUILD_REF=""
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            BUILD_REF="$INPUT_REF"
+          elif [[ "$GITHUB_REF" == refs/heads/* ]]; then
+            BUILD_REF="${GITHUB_REF#refs/heads/}"
+          fi
+
           if [[ $GITHUB_EVENT_NAME == "schedule" ]]; then
             BASE_CONFIG+=$'\n'"type=schedule,pattern=nightly"
             BASE_CONFIG+=$'\n'"type=schedule,pattern=nightly-{{date 'ddd'}}"
@@ -106,6 +125,10 @@ jobs:
                 BASE_CONFIG+=$'\n'"type=raw,value=stable"
               fi
             fi
+          elif [[ -n "$BUILD_REF" && "$BUILD_REF" != "main" ]]; then
+            # Slugify the branch into a valid Docker tag (non [A-Za-z0-9._-] -> -).
+            BRANCH_SLUG="$(printf '%s' "$BUILD_REF" | sed -E 's#[^a-zA-Z0-9._-]+#-#g; s#^-+##; s#-+$##')"
+            BASE_CONFIG+=$'\n'"type=raw,value=${BRANCH_SLUG}"
           fi
           {
             echo 'TAGS_SPEC<<EOF'
@@ -149,7 +172,7 @@ jobs:
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},name-canonical=true,push-by-digest=true,oci-mediatypes=true
 
       - name: Export the Docker image digest
-        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || github.event.inputs.push }}
+        if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event.inputs.push }}
         run: |
           mkdir -p "${RUNNER_TEMP}"/digests
           echo "${DIGEST#sha256:}" > "${RUNNER_TEMP}/digests/digest-${PLATFORM}"
@@ -158,7 +181,7 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
 
       - name: Upload the Docker image digest
-        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || github.event.inputs.push }}
+        if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event.inputs.push }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: digest-${{ matrix.platform }}
@@ -168,7 +191,7 @@ jobs:
 
   merge:
     name: Merge multi-arch manifest & push multi-arch tag
-    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || github.event.inputs.push }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event.inputs.push }}
     needs: [build]
 
     timeout-minutes: 60
