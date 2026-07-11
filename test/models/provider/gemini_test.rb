@@ -285,6 +285,59 @@ class Provider::GeminiTest < ActiveSupport::TestCase
     end
   end
 
+  test "streaming emits assembled text when the model delivers it in one final chunk" do
+    with_env_overrides("GEMINI_STREAMING" => "true") do
+      chunk = {
+        "responseId" => "resp_final",
+        "candidates" => [ { "content" => { "parts" => [ { "text" => "Here are your spending insights." } ] } } ],
+        "usageMetadata" => { "promptTokenCount" => 100, "candidatesTokenCount" => 8, "totalTokenCount" => 108 }
+      }
+
+      fake = mock
+      fake.stubs(:stream_generate_content).yields(chunk).returns(nil)
+      Provider::Gemini::Client.stubs(:new).returns(fake)
+
+      chunks = []
+      Provider::Gemini.new("k").chat_response("hi", model: "gemini-2.5-flash", streamer: ->(c) { chunks << c })
+
+      deltas = chunks.select { |c| c.type == "output_text" }.map(&:data).join
+      assert_equal "Here are your spending insights.", deltas
+    end
+  end
+
+  test "streaming replays final text after tool calls so the responder marks the turn answered" do
+    with_env_overrides("GEMINI_STREAMING" => "true") do
+      tool_chunk = {
+        "responseId" => "resp_tool",
+        "candidates" => [ { "content" => { "parts" => [ {
+          "functionCall" => { "name" => "get_transactions", "args" => { "limit" => 10 } },
+          "thoughtSignature" => "SIG_A"
+        } ] } } ]
+      }
+      answer_chunk = {
+        "responseId" => "resp_tool",
+        "candidates" => [ { "content" => { "parts" => [ { "text" => "You spent $420 on groceries." } ] } } ],
+        "usageMetadata" => { "promptTokenCount" => 50, "candidatesTokenCount" => 10, "totalTokenCount" => 60 }
+      }
+
+      fake = mock
+      fake.stubs(:stream_generate_content).multiple_yields([ tool_chunk ], [ answer_chunk ]).returns(nil)
+      Provider::Gemini::Client.stubs(:new).returns(fake)
+
+      chunks = []
+      response = Provider::Gemini.new("k").chat_response(
+        "hi",
+        model: "gemini-2.5-flash",
+        functions: [ { name: "get_transactions", description: "d", params_schema: { type: "object" } } ],
+        streamer: ->(c) { chunks << c }
+      )
+
+      assert response.success?
+      assert_equal "get_transactions", response.data.function_requests.first.function_name
+      assert_equal "You spent $420 on groceries.", chunks.select { |c| c.type == "output_text" }.map(&:data).join
+    end
+  end
+
   # --- Pricing (#1) ----------------------------------------------------------
   test "gemini 3.x models have pricing" do
     assert_not_nil LlmUsage.calculate_cost(model: "gemini-3.1-flash-lite", prompt_tokens: 1000, completion_tokens: 1000)

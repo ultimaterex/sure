@@ -237,14 +237,20 @@ class Provider::Gemini < Provider
         response_id ||= chunk["responseId"]
         model_version ||= chunk["modelVersion"]
 
+        chunk_function_parts = []
         Array(chunk.dig("candidates", 0, "content", "parts")).each do |part|
           if part["text"].present?
             text << part["text"]
-            streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: part["text"], usage: nil))
+            if streamer.present?
+              streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: part["text"], usage: nil))
+            end
           elsif part["functionCall"]
-            function_parts << part
+            chunk_function_parts << part
           end
         end
+        # Streaming chunks carry the latest assembled functionCall state, not
+        # additive deltas — keep the most recent snapshot.
+        function_parts = chunk_function_parts if chunk_function_parts.any?
 
         usage = Provider::Gemini::Usage.from_metadata(chunk["usageMetadata"]) if chunk["usageMetadata"].present?
       end
@@ -259,8 +265,30 @@ class Provider::Gemini < Provider
         "candidates" => [ { "content" => { "parts" => final_parts } } ]
       ).parsed
 
-      streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "response", data: parsed, usage: usage))
+      if streamer.present?
+        # Match sync_chat_response: the responder only listens for output_text
+        # chunks, so text that arrives only in the final assembled response (common
+        # after tool calls) must still be emitted here.
+        emit_remaining_streamed_text(streamer, text, parsed)
+        streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "response", data: parsed, usage: usage))
+      end
+
       [ parsed, usage ]
+    end
+
+    def emit_remaining_streamed_text(streamer, streamed_text, parsed)
+      assembled = parsed.messages.filter_map(&:output_text).join
+      return if assembled.blank?
+
+      remaining =
+        if streamed_text.present? && assembled.start_with?(streamed_text)
+          assembled[streamed_text.length..]
+        else
+          assembled
+        end
+      return if remaining.blank?
+
+      streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: remaining, usage: nil))
     end
 
     # Preserve the response body (captured in Error#details) through the
