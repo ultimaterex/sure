@@ -99,6 +99,29 @@ class Provider::GeminiTest < ActiveSupport::TestCase
     assert_equal "f", body[:tools].first[:functionDeclarations].first[:name]
   end
 
+  test "build_request strips Gemini-unsupported schema keywords from tool parameters" do
+    functions = [ {
+      name: "search",
+      description: "d",
+      params_schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          tags: { type: "array", uniqueItems: true, items: { type: "string" } }
+        },
+        required: [ "tags" ]
+      }
+    } ]
+
+    body = Provider::Gemini::ChatConfig.new(prompt: "hi", functions: functions).build_request(model: "m")[:body]
+    params = body[:tools].first[:functionDeclarations].first[:parameters]
+
+    assert_not params.key?(:additionalProperties)
+    assert_not params[:properties][:tags].key?(:uniqueItems)
+    assert_equal "string", params[:properties][:tags][:items][:type]
+    assert_equal [ "tags" ], params[:required]
+  end
+
   test "build_request replays tool results as model functionCall (with signature) + user functionResponse" do
     body = Provider::Gemini::ChatConfig.new(
       prompt: "hi",

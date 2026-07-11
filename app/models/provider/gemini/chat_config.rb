@@ -72,11 +72,35 @@ class Provider::Gemini::ChatConfig
       declarations = @functions.map do |fn|
         declaration = { name: fn[:name], description: fn[:description] }
         params = fn[:params_schema]
-        declaration[:parameters] = params if params.present?
+        declaration[:parameters] = sanitize_schema(params) if params.present?
         declaration
       end
 
       [ { functionDeclarations: declarations } ]
+    end
+
+    # Gemini's function-declaration schema is a strict OpenAPI 3.0 subset and
+    # rejects JSON-Schema keywords the app's tool definitions include (e.g.
+    # `additionalProperties`, `uniqueItems`). Strip the unsupported keys
+    # recursively; everything Gemini understands passes through untouched.
+    UNSUPPORTED_SCHEMA_KEYS = %w[
+      additionalProperties uniqueItems $schema $id $ref definitions
+      patternProperties strict exclusiveMinimum exclusiveMaximum const
+    ].freeze
+
+    def sanitize_schema(node)
+      case node
+      when Hash
+        node.each_with_object({}) do |(key, value), acc|
+          next if UNSUPPORTED_SCHEMA_KEYS.include?(key.to_s)
+
+          acc[key] = sanitize_schema(value)
+        end
+      when Array
+        node.map { |item| sanitize_schema(item) }
+      else
+        node
+      end
     end
 
     def gemini_role(record)
