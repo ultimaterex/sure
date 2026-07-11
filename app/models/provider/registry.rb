@@ -111,6 +111,19 @@ class Provider::Registry
         Provider::Anthropic.new(access_token, base_url: base_url, model: model)
       end
 
+      def gemini
+        access_token = ENV["GEMINI_ACCESS_TOKEN"].presence ||
+                       ENV["GEMINI_API_KEY"].presence ||
+                       Setting.gemini_access_token
+
+        return nil unless access_token.present?
+
+        base_url = ENV["GEMINI_BASE_URL"].presence || Setting.gemini_base_url
+        model = ENV["GEMINI_MODEL"].presence || Setting.gemini_model
+
+        Provider::Gemini.new(access_token, base_url: base_url, model: model)
+      end
+
       def yahoo_finance
         Provider::YahooFinance.new
       end
@@ -196,9 +209,9 @@ class Provider::Registry
       when :securities
         %i[twelve_data yahoo_finance tiingo eodhd alpha_vantage mfapi binance_public moex_public tinkoff_invest]
       when :llm
-        %i[openai anthropic]
+        %i[openai anthropic gemini]
       else
-        %i[plaid_us plaid_eu github openai anthropic]
+        %i[plaid_us plaid_eu github openai anthropic gemini]
       end
     end
 end

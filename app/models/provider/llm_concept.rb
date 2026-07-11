@@ -32,7 +32,14 @@ module Provider::LlmConcept
   ChatMessage = Data.define(:id, :output_text)
   ChatStreamChunk = Data.define(:type, :data, :usage)
   ChatResponse = Data.define(:id, :model, :messages, :function_requests)
-  ChatFunctionRequest = Data.define(:id, :call_id, :function_name, :function_args)
+  # `thought_signature` carries provider reasoning state (Gemini attaches one to
+  # each functionCall part and requires it echoed back on the replayed call). Nil
+  # default so providers that don't use it construct requests unchanged.
+  ChatFunctionRequest = Data.define(:id, :call_id, :function_name, :function_args, :thought_signature) do
+    def initialize(id:, call_id:, function_name:, function_args:, thought_signature: nil)
+      super
+    end
+  end
 
   def chat_response(
     prompt,

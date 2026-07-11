@@ -130,6 +130,10 @@ class LlmUsage < ApplicationRecord
     # bill via their own provider, not Anthropic directly).
     return "anthropic" if model.start_with?("anthropic.", "anthropic/")
 
+    # Native Gemini models (incl. the `models/gemini-*` resource-name form) are
+    # billed under Google, even when a specific version isn't in the price map.
+    return "google" if model.start_with?("gemini", "models/gemini")
+
     # Check each provider to see if they have pricing for this model
     PRICING.each do |provider_name, provider_pricing|
       # Try exact match first
