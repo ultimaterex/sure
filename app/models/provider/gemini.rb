@@ -67,25 +67,62 @@ class Provider::Gemini < Provider
     true
   end
 
-  # --- Auxiliary LLM features (implemented in later phases) -----------------
+  # --- Auxiliary LLM features (native structured output / inline PDF) --------
   def auto_categorize(transactions: [], user_categories: [], model: "", family: nil, json_mode: nil)
-    not_yet_implemented("auto_categorize")
+    with_provider_response do
+      raise Error.new("Too many transactions to auto-categorize. Max is 25 per request.", :bad_request) if transactions.size > 25
+      raise Error.new("No categories available for auto-categorization", :bad_request) if user_categories.blank?
+
+      resolved = effective_model(model)
+      processor = Provider::Gemini::AutoCategorizer.new(client, model: resolved, transactions: transactions, user_categories: user_categories)
+      result = processor.auto_categorize
+      record_llm_usage(family: family, model: resolved, operation: "auto_categorize", usage: processor.last_usage)
+      result
+    end
   end
 
   def auto_detect_merchants(transactions: [], user_merchants: [], model: "", family: nil, json_mode: nil)
-    not_yet_implemented("auto_detect_merchants")
+    with_provider_response do
+      raise Error.new("Too many transactions to auto-detect merchants. Max is 25 per request.", :bad_request) if transactions.size > 25
+
+      resolved = effective_model(model)
+      processor = Provider::Gemini::AutoMerchantDetector.new(client, model: resolved, transactions: transactions, user_merchants: user_merchants)
+      result = processor.auto_detect_merchants
+      record_llm_usage(family: family, model: resolved, operation: "auto_detect_merchants", usage: processor.last_usage)
+      result
+    end
   end
 
   def enhance_provider_merchants(merchants: [], model: "", family: nil, json_mode: nil)
-    not_yet_implemented("enhance_provider_merchants")
+    with_provider_response do
+      raise Error.new("Too many merchants to enhance. Max is 25 per request.", :bad_request) if merchants.size > 25
+
+      resolved = effective_model(model)
+      processor = Provider::Gemini::ProviderMerchantEnhancer.new(client, model: resolved, merchants: merchants)
+      result = processor.enhance_merchants
+      record_llm_usage(family: family, model: resolved, operation: "enhance_provider_merchants", usage: processor.last_usage)
+      result
+    end
   end
 
   def process_pdf(pdf_content:, model: "", family: nil)
-    not_yet_implemented("process_pdf")
+    with_provider_response do
+      resolved = effective_model(model)
+      processor = Provider::Gemini::PdfProcessor.new(client, model: resolved, pdf_content: pdf_content)
+      result = processor.process
+      record_llm_usage(family: family, model: resolved, operation: "process_pdf", usage: processor.last_usage)
+      result
+    end
   end
 
   def extract_bank_statement(pdf_content:, model: "", family: nil)
-    not_yet_implemented("extract_bank_statement")
+    with_provider_response do
+      resolved = effective_model(model)
+      processor = Provider::Gemini::BankStatementExtractor.new(client: client, model: resolved, pdf_content: pdf_content)
+      result = processor.extract
+      record_llm_usage(family: family, model: resolved, operation: "extract_bank_statement", usage: processor.last_usage)
+      result
+    end
   end
 
   # --- Chat ------------------------------------------------------------------
@@ -216,7 +253,7 @@ class Provider::Gemini < Provider
       "(message unavailable: #{e.class})"
     end
 
-    def not_yet_implemented(feature)
-      raise Error.new("Provider::Gemini##{feature} is not implemented yet (native Gemini provider, phase 1 = chat).", :not_implemented)
+    def effective_model(model)
+      model.presence || @default_model
     end
 end

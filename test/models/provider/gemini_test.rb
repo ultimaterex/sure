@@ -134,4 +134,90 @@ class Provider::GeminiTest < ActiveSupport::TestCase
     assert_equal 15, usage["total_tokens"]
     assert_equal 4, usage["cache_read_input_tokens"]
   end
+
+  # --- Auxiliary features (structured output / inline PDF) -------------------
+  def stub_json_client(payload)
+    fake = mock
+    fake.stubs(:generate_content).returns(
+      "candidates" => [ { "content" => { "parts" => [ { "text" => payload.to_json } ] } } ],
+      "usageMetadata" => { "promptTokenCount" => 5, "candidatesTokenCount" => 5, "totalTokenCount" => 10 }
+    )
+    Provider::Gemini::Client.stubs(:new).returns(fake)
+    fake
+  end
+
+  test "auto_categorize maps structured output and normalizes null" do
+    stub_json_client("categorizations" => [
+      { "transaction_id" => "1", "category_name" => "Shopping" },
+      { "transaction_id" => "2", "category_name" => "null" }
+    ])
+
+    response = Provider::Gemini.new("k").auto_categorize(
+      transactions: [ { id: "1", name: "Amazon" }, { id: "2", name: "POS DEBIT" } ],
+      user_categories: [ { id: "s", name: "Shopping" } ]
+    )
+
+    assert response.success?
+    assert_equal "Shopping", response.data.find { |c| c.transaction_id == "1" }.category_name
+    assert_nil response.data.find { |c| c.transaction_id == "2" }.category_name
+  end
+
+  test "auto_detect_merchants maps structured output" do
+    stub_json_client("merchants" => [ { "transaction_id" => "1", "business_name" => "Amazon", "business_url" => "amazon.com" } ])
+
+    response = Provider::Gemini.new("k").auto_detect_merchants(
+      transactions: [ { id: "1", name: "amzn 123" } ],
+      user_merchants: []
+    )
+
+    assert response.success?
+    assert_equal "Amazon", response.data.first.business_name
+    assert_equal "amazon.com", response.data.first.business_url
+  end
+
+  test "enhance_provider_merchants maps structured output" do
+    stub_json_client("merchants" => [ { "merchant_id" => "m1", "business_url" => "walmart.com" } ])
+
+    response = Provider::Gemini.new("k").enhance_provider_merchants(merchants: [ { id: "m1", name: "Walmart" } ])
+
+    assert response.success?
+    assert_equal "walmart.com", response.data.first.business_url
+  end
+
+  test "process_pdf classifies and summarizes" do
+    stub_json_client("document_type" => "bank_statement", "summary" => "A statement", "extracted_data" => { "currency" => "USD" })
+
+    response = Provider::Gemini.new("k").process_pdf(pdf_content: "%PDF-1.4 fake")
+
+    assert response.success?
+    assert_equal "bank_statement", response.data.document_type
+    assert_equal "A statement", response.data.summary
+    assert_equal "USD", response.data.extracted_data["currency"]
+  end
+
+  test "extract_bank_statement normalizes transactions" do
+    stub_json_client(
+      "bank_name" => "Test Bank",
+      "transactions" => [ { "date" => "2026-01-15", "description" => "Coffee", "amount" => -4.5, "reference" => "REF1" } ]
+    )
+
+    response = Provider::Gemini.new("k").extract_bank_statement(pdf_content: "%PDF-1.4 fake")
+
+    assert response.success?
+    txn = response.data[:transactions].first
+    assert_equal "2026-01-15", txn[:date]
+    assert_equal(-4.5, txn[:amount])
+    assert_equal "Coffee", txn[:name]
+    assert_equal "REF1", txn[:notes]
+  end
+
+  test "auto_categorize rejects oversized batches" do
+    Provider::Gemini::Client.stubs(:new).returns(mock)
+    txns = Array.new(26) { |i| { id: i.to_s, name: "t#{i}" } }
+
+    response = Provider::Gemini.new("k").auto_categorize(transactions: txns, user_categories: [ { id: "s", name: "Shopping" } ])
+
+    assert_not response.success?
+    assert_kind_of Provider::Gemini::Error, response.error
+  end
 end
