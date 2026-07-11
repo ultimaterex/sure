@@ -50,19 +50,21 @@ class Provider::GeminiTest < ActiveSupport::TestCase
     assert_equal({ "q" => "utilities" }, JSON.parse(request.function_args))
   end
 
-  test "streamer receives output text then the final response" do
-    stub_client(
-      "responseId" => "resp_3",
-      "candidates" => [ { "content" => { "parts" => [ { "text" => "Answer" } ] } } ],
-      "usageMetadata" => { "promptTokenCount" => 1, "candidatesTokenCount" => 1, "totalTokenCount" => 2 }
-    )
+  test "sync-replay path (streaming disabled) drives the streamer with output then response" do
+    with_env_overrides("GEMINI_STREAMING" => "false") do
+      stub_client(
+        "responseId" => "resp_3",
+        "candidates" => [ { "content" => { "parts" => [ { "text" => "Answer" } ] } } ],
+        "usageMetadata" => { "promptTokenCount" => 1, "candidatesTokenCount" => 1, "totalTokenCount" => 2 }
+      )
 
-    chunks = []
-    provider = Provider::Gemini.new("test-key")
-    provider.chat_response("hi", model: "gemini-2.5-flash", streamer: ->(c) { chunks << c })
+      chunks = []
+      provider = Provider::Gemini.new("test-key")
+      provider.chat_response("hi", model: "gemini-2.5-flash", streamer: ->(c) { chunks << c })
 
-    assert_equal %w[output_text response], chunks.map(&:type)
-    assert_equal "Answer", chunks.first.data
+      assert_equal %w[output_text response], chunks.map(&:type)
+      assert_equal "Answer", chunks.first.data
+    end
   end
 
   test "supports gemini models and rejects others" do
@@ -281,5 +283,63 @@ class Provider::GeminiTest < ActiveSupport::TestCase
       assert_equal %w[Hel lo], deltas
       assert_equal "Hello", final.data.messages.first.output_text
     end
+  end
+
+  # --- Pricing (#1) ----------------------------------------------------------
+  test "gemini 3.x models have pricing" do
+    assert_not_nil LlmUsage.calculate_cost(model: "gemini-3.1-flash-lite", prompt_tokens: 1000, completion_tokens: 1000)
+    assert_not_nil LlmUsage.calculate_cost(model: "gemini-3.1-pro", prompt_tokens: 1000, completion_tokens: 1000)
+    # flash-lite must price cheaper than flash (ordering / exact-match sanity)
+    lite = LlmUsage.calculate_cost(model: "gemini-3.1-flash-lite", prompt_tokens: 1_000_000, completion_tokens: 0)
+    flash = LlmUsage.calculate_cost(model: "gemini-3.1-flash", prompt_tokens: 1_000_000, completion_tokens: 0)
+    assert lite < flash
+  end
+
+  # --- Context cache (#3) ----------------------------------------------------
+  test "context cache is disabled by default" do
+    cache = Provider::Gemini::ContextCache.new(mock)
+    assert_nil cache.fetch(model: "gemini-2.5-flash", system_instruction: { parts: [ { text: "sys" } ] }, tools: [])
+  end
+
+  test "context cache creates and returns a cache name when enabled" do
+    with_env_overrides("GEMINI_CONTEXT_CACHE" => "true") do
+      client = mock
+      client.expects(:create_cached_content).returns("cachedContents/abc")
+
+      cache = Provider::Gemini::ContextCache.new(client)
+      name = cache.fetch(
+        model: "gemini-2.5-flash",
+        system_instruction: { parts: [ { text: "sys-#{SecureRandom.hex}" } ] },
+        tools: []
+      )
+      assert_equal "cachedContents/abc", name
+    end
+  end
+
+  test "context cache falls back to nil on provider error (never breaks the request)" do
+    with_env_overrides("GEMINI_CONTEXT_CACHE" => "true") do
+      client = mock
+      client.stubs(:create_cached_content).raises(Provider::Gemini::Error.new("cached content too small", :bad_request))
+
+      cache = Provider::Gemini::ContextCache.new(client)
+      assert_nil cache.fetch(
+        model: "gemini-2.5-flash",
+        system_instruction: { parts: [ { text: "sys-#{SecureRandom.hex}" } ] },
+        tools: []
+      )
+    end
+  end
+
+  test "build_request references cachedContent and omits system + tools" do
+    body = Provider::Gemini::ChatConfig.new(
+      prompt: "hi",
+      instructions: "sys",
+      functions: [ { name: "f", description: "d", params_schema: { type: "object" } } ]
+    ).build_request(model: "m", cached_content: "cachedContents/abc")[:body]
+
+    assert_equal "cachedContents/abc", body[:cachedContent]
+    assert_not body.key?(:systemInstruction)
+    assert_not body.key?(:tools)
+    assert body[:contents].present?
   end
 end

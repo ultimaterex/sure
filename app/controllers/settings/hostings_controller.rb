@@ -254,6 +254,14 @@ class Settings::HostingsController < ApplicationController
       Setting.gemini_model = hosting_params[:gemini_model].presence
     end
 
+    if hosting_params.key?(:gemini_streaming)
+      Setting.gemini_streaming = hosting_params[:gemini_streaming] == "1"
+    end
+
+    if hosting_params.key?(:gemini_context_cache)
+      Setting.gemini_context_cache = hosting_params[:gemini_context_cache] == "1"
+    end
+
     if hosting_params.key?(:llm_provider)
       provider = hosting_params[:llm_provider].to_s
       if %w[openai anthropic gemini].include?(provider)
@@ -326,7 +334,7 @@ class Settings::HostingsController < ApplicationController
   private
     def hosting_params
       return ActionController::Parameters.new unless params.key?(:setting)
-      params.require(:setting).permit(:onboarding_state, :require_email_confirmation, :invite_only_default_family_id, :brand_fetch_client_id, :brand_fetch_high_res_logos, :twelve_data_api_key, :tiingo_api_key, :eodhd_api_key, :alpha_vantage_api_key, :tinkoff_invest_api_key, :openai_access_token, :openai_oauth_token, :openai_oauth_account_id, :openai_uri_base, :openai_model, :openai_json_mode, :anthropic_access_token, :anthropic_base_url, :anthropic_model, :gemini_access_token, :gemini_base_url, :gemini_model, :llm_provider, :llm_context_window, :llm_max_response_tokens, :llm_max_items_per_call, :exchange_rate_provider, :securities_provider, :syncs_include_pending, :auto_sync_enabled, :auto_sync_time, :external_assistant_url, :external_assistant_token, :external_assistant_agent_id, securities_providers: [])
+      params.require(:setting).permit(:onboarding_state, :require_email_confirmation, :invite_only_default_family_id, :brand_fetch_client_id, :brand_fetch_high_res_logos, :twelve_data_api_key, :tiingo_api_key, :eodhd_api_key, :alpha_vantage_api_key, :tinkoff_invest_api_key, :openai_access_token, :openai_oauth_token, :openai_oauth_account_id, :openai_uri_base, :openai_model, :openai_json_mode, :anthropic_access_token, :anthropic_base_url, :anthropic_model, :gemini_access_token, :gemini_base_url, :gemini_model, :gemini_streaming, :gemini_context_cache, :llm_provider, :llm_context_window, :llm_max_response_tokens, :llm_max_items_per_call, :exchange_rate_provider, :securities_provider, :syncs_include_pending, :auto_sync_enabled, :auto_sync_time, :external_assistant_url, :external_assistant_token, :external_assistant_agent_id, securities_providers: [])
     end
 
     def update_assistant_type

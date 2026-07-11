@@ -15,12 +15,39 @@ class Provider::Gemini::ChatConfig
     @default_max_tokens = default_max_tokens
   end
 
-  def build_request(model:)
+  def build_request(model:, cached_content: nil)
     body = { contents: contents }
-    body[:systemInstruction] = { parts: [ { text: @instructions } ] } if @instructions.present?
-    body[:tools] = tools if tools.present?
+    if cached_content.present?
+      # The stable system instruction + tools live in the referenced cache, so
+      # they're omitted from the request body (that's where the savings come from).
+      body[:cachedContent] = cached_content
+    else
+      body[:systemInstruction] = system_instruction if system_instruction
+      body[:tools] = tools if tools.present?
+    end
     body[:generationConfig] = { maxOutputTokens: @default_max_tokens }
     { model: model, body: body }
+  end
+
+  # Stable across a chat turn — exposed so the context cache can store the same
+  # payload the request would otherwise inline.
+  def system_instruction
+    return nil if @instructions.blank?
+
+    { parts: [ { text: @instructions } ] }
+  end
+
+  def tools
+    return [] if @functions.empty?
+
+    declarations = @functions.map do |fn|
+      declaration = { name: fn[:name], description: fn[:description] }
+      params = fn[:params_schema]
+      declaration[:parameters] = sanitize_schema(params) if params.present?
+      declaration
+    end
+
+    [ { functionDeclarations: declarations } ]
   end
 
   private
@@ -64,19 +91,6 @@ class Provider::Gemini::ChatConfig
         { role: "model", parts: model_parts },
         { role: "user", parts: response_parts }
       ]
-    end
-
-    def tools
-      return [] if @functions.empty?
-
-      declarations = @functions.map do |fn|
-        declaration = { name: fn[:name], description: fn[:description] }
-        params = fn[:params_schema]
-        declaration[:parameters] = sanitize_schema(params) if params.present?
-        declaration
-      end
-
-      [ { functionDeclarations: declarations } ]
     end
 
     # Gemini's function-declaration schema is a strict OpenAPI 3.0 subset and

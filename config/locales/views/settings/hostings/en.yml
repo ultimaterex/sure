@@ -129,6 +129,10 @@ en:
         model_label: Default Model (Optional)
         model_placeholder: "gemini-2.5-flash (default)"
         model_help: Used for chat, structured features (categorize, merchant detection), and PDF processing.
+        streaming_label: Stream responses
+        streaming_description: Render chat replies token-by-token as they arrive.
+        context_cache_label: Context caching
+        context_cache_description: Cache the system prompt + tools to lower per-message cost. Needs a large enough prompt to qualify.
       openai_settings:
         description: Enter an API key, a Codex OAuth token, or configure a custom OpenAI-compatible provider
         env_configured_message: Successfully configured through environment variables.

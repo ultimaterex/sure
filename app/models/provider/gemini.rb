@@ -150,8 +150,16 @@ class Provider::Gemini < Provider
         default_max_tokens: default_max_tokens
       )
 
-      request = config.build_request(model: model)
       resolved = effective_model(model)
+
+      # Cache the stable system instruction + tools and reference them, cutting
+      # per-request input tokens. Best-effort: nil when unavailable → inline.
+      cached_content = context_cache.fetch(
+        model: resolved,
+        system_instruction: config.system_instruction,
+        tools: config.tools
+      )
+      request = config.build_request(model: model, cached_content: cached_content)
 
       begin
         parsed, usage =
@@ -173,14 +181,26 @@ class Provider::Gemini < Provider
   private
     attr_reader :client
 
+    def context_cache
+      @context_cache ||= Provider::Gemini::ContextCache.new(client)
+    end
+
     def default_max_tokens
       ENV.fetch("GEMINI_MAX_TOKENS", 4096).to_i
     end
 
-    # SSE streaming is opt-in until the wire format is confirmed against a live
-    # key; the sync path (below) is the default and drives the assistant fine.
+    # SSE streaming (token-by-token chat). Precedence: GEMINI_STREAMING env wins
+    # (and locks the UI toggle); otherwise the Setting toggle, default on. Set to
+    # false to fall back to the sync path if the wire format ever misbehaves.
     def streaming_enabled?
-      ActiveModel::Type::Boolean.new.cast(ENV.fetch("GEMINI_STREAMING", false))
+      self.class.flag_enabled?("GEMINI_STREAMING", Setting.gemini_streaming)
+    end
+
+    def self.flag_enabled?(env_key, setting_value)
+      env = ENV[env_key]
+      return ActiveModel::Type::Boolean.new.cast(env) if env.present?
+
+      ActiveModel::Type::Boolean.new.cast(setting_value)
     end
 
     # generateContent is synchronous. When a streamer is supplied we replay the
@@ -253,6 +273,10 @@ class Provider::Gemini < Provider
 
     def record_llm_usage(family:, model:, operation:, usage: nil, error: nil)
       return unless family
+
+      # Normalize the resource-name form ("models/gemini-…") to the bare id so it
+      # matches the pricing table and groups cleanly in the cost ledger.
+      model = model.to_s.delete_prefix("models/")
 
       if error.present?
         provider_response_body = error.respond_to?(:details) ? error.details : nil

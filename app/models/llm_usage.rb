@@ -50,9 +50,21 @@ class LlmUsage < ApplicationRecord
       "o3-mini" => { prompt: 1.10, completion: 4.40 },
       "o3-pro" => { prompt: 20.00, completion: 80.00 }
     },
+    # Google Gemini pricing per 1M tokens. Keys are matched exact-first, then by
+    # prefix, so `-flash-lite` entries MUST precede `-flash` (a lite model id
+    # starts with the flash id). Gemini 3.x rates below are estimates by tier
+    # (verify against Google's current pricing); model ids are normalized to
+    # strip the `models/` resource prefix before lookup.
     "google" => {
       "gemini-2.5-pro" => { prompt: 1.25, completion: 10.00 },
-      "gemini-2.5-flash" => { prompt: 0.3, completion: 2.50 }
+      "gemini-2.5-flash-lite" => { prompt: 0.10, completion: 0.40 },
+      "gemini-2.5-flash" => { prompt: 0.3, completion: 2.50 },
+      "gemini-3.1-pro" => { prompt: 1.25, completion: 10.00 },
+      "gemini-3.1-flash-lite" => { prompt: 0.10, completion: 0.40 },
+      "gemini-3.1-flash" => { prompt: 0.30, completion: 2.50 },
+      "gemini-3-pro" => { prompt: 1.25, completion: 10.00 },
+      "gemini-3-flash-lite" => { prompt: 0.10, completion: 0.40 },
+      "gemini-3-flash" => { prompt: 0.30, completion: 2.50 }
     },
     # Anthropic pricing per 1M tokens (Claude 4.x family, as of May 2026)
     # Source: https://www.anthropic.com/pricing

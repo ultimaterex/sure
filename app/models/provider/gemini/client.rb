@@ -48,6 +48,22 @@ class Provider::Gemini::Client
     nil
   end
 
+  # Creates a cached-content object holding stable request context (system
+  # instruction + tools) and returns its `name` for reuse via `cachedContent`.
+  def create_cached_content(model:, system_instruction: nil, tools: nil, ttl_seconds: 3600)
+    body = { model: "models/#{model.to_s.delete_prefix('models/')}", ttl: "#{ttl_seconds}s" }
+    body[:systemInstruction] = system_instruction if system_instruction.present?
+    body[:tools] = tools if tools.present?
+
+    response = self.class.post(
+      "#{@base_url}/v1beta/cachedContents",
+      headers: headers,
+      body: body.to_json,
+      timeout: @timeout
+    )
+    handle_response(response)["name"]
+  end
+
   private
 
     def response_chunk?(chunk)

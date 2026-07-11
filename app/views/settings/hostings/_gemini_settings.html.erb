@@ -50,4 +50,36 @@
                         data: { "auto-submit-form-target": "auto" } %>
     <p class="text-xs text-secondary mt-1"><%= t(".model_help") %></p>
   <% end %>
+
+  <div class="flex items-center justify-between pt-2">
+    <div class="space-y-1">
+      <p class="text-sm"><%= t(".streaming_label") %></p>
+      <p class="text-secondary text-sm"><%= t(".streaming_description") %></p>
+    </div>
+    <%= styled_form_with model: Setting.new,
+                         url: settings_hosting_path,
+                         method: :patch,
+                         data: { controller: "auto-submit-form", auto_submit_form_trigger_event_value: "change" } do |form| %>
+      <%= form.toggle :gemini_streaming,
+                      checked: ENV["GEMINI_STREAMING"].present? ? ENV["GEMINI_STREAMING"] == "true" : Setting.gemini_streaming,
+                      disabled: ENV["GEMINI_STREAMING"].present?,
+                      data: { auto_submit_form_target: "auto" } %>
+    <% end %>
+  </div>
+
+  <div class="flex items-center justify-between pt-2">
+    <div class="space-y-1">
+      <p class="text-sm"><%= t(".context_cache_label") %></p>
+      <p class="text-secondary text-sm"><%= t(".context_cache_description") %></p>
+    </div>
+    <%= styled_form_with model: Setting.new,
+                         url: settings_hosting_path,
+                         method: :patch,
+                         data: { controller: "auto-submit-form", auto_submit_form_trigger_event_value: "change" } do |form| %>
+      <%= form.toggle :gemini_context_cache,
+                      checked: ENV["GEMINI_CONTEXT_CACHE"].present? ? ENV["GEMINI_CONTEXT_CACHE"] == "true" : Setting.gemini_context_cache,
+                      disabled: ENV["GEMINI_CONTEXT_CACHE"].present?,
+                      data: { auto_submit_form_target: "auto" } %>
+    <% end %>
+  </div>
 </div>
