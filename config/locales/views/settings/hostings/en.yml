@@ -102,6 +102,7 @@ en:
         provider_label: Active LLM provider
         provider_openai: OpenAI
         provider_anthropic: Anthropic (Claude)
+        provider_gemini: Gemini (Google)
         provider_help: Switching providers takes effect on the next chat. Configure the active provider's credentials below.
         not_configured_hint: "Add a %{provider} API key below to activate it."
         data_retention_heading: Data handling
@@ -117,6 +118,17 @@ en:
         model_label: Default Model (Optional)
         model_placeholder: "claude-sonnet-4-6 (default)"
         model_help: Used for chat and PDF processing. Batch operations (categorize, merchant detection) default to Haiku for cost.
+      gemini_settings:
+        title: Gemini (Google)
+        description: Enter your Google Gemini API key. Optionally point Base URL at a compatible proxy.
+        env_configured_message: Successfully configured through environment variables.
+        access_token_label: API Key
+        access_token_placeholder: Enter your Gemini API key
+        base_url_label: Base URL (Optional)
+        base_url_placeholder: "https://generativelanguage.googleapis.com (default)"
+        model_label: Default Model (Optional)
+        model_placeholder: "gemini-2.5-flash (default)"
+        model_help: Used for chat, structured features (categorize, merchant detection), and PDF processing.
       openai_settings:
         description: Enter an API key, a Codex OAuth token, or configure a custom OpenAI-compatible provider
         env_configured_message: Successfully configured through environment variables.
@@ -225,6 +237,8 @@ en:
         invalid_llm_budget: "%{field} must be a whole number ≥ %{minimum}."
         invalid_anthropic_base_url: Anthropic Base URL must be an http(s) URL.
         anthropic_model_required_for_base_url: Anthropic Model is required when a custom Base URL is set.
+        invalid_gemini_base_url: Gemini Base URL must be an http(s) URL.
+        gemini_model_required_for_base_url: Gemini Model is required when a custom Base URL is set.
         scheduler_sync_failed: Settings saved, but failed to update the sync schedule. Please try again or check the server logs.
       disconnect_external_assistant:
         external_assistant_disconnected: External assistant disconnected

@@ -15,6 +15,10 @@
                 hidden: Setting.llm_provider != "anthropic" do %>
       <%= render "settings/hostings/anthropic_settings" %>
     <% end %>
+    <%= tag.div data: { "provider-settings-target": "panel", provider: "gemini" },
+                hidden: Setting.llm_provider != "gemini" do %>
+      <%= render "settings/hostings/gemini_settings" %>
+    <% end %>
     <%= render "settings/hostings/brand_fetch_settings" %>
   </div>
 <% end %>

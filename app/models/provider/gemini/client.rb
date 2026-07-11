@@ -25,7 +25,34 @@ class Provider::Gemini::Client
     handle_response(response)
   end
 
+  # Streaming generation over SSE. Yields each decoded response chunk. Chunks
+  # that aren't model output (e.g. an error body streamed as fragments) are
+  # filtered out; a non-200 status is raised after the stream completes.
+  def stream_generate_content(model:, body:)
+    parser = Provider::Gemini::StreamParser.new
+
+    response = self.class.post(
+      "#{@base_url}/v1beta/#{model_path(model)}:streamGenerateContent?alt=sse",
+      headers: headers,
+      body: body.to_json,
+      timeout: @timeout,
+      stream_body: true
+    ) do |fragment|
+      parser.push(fragment) { |chunk| yield chunk if response_chunk?(chunk) }
+    end
+
+    unless response.code == 200
+      raise Provider::Gemini::Error.new("Gemini streaming request failed (status #{response.code})", :fetch_failed)
+    end
+
+    nil
+  end
+
   private
+
+    def response_chunk?(chunk)
+      chunk.is_a?(Hash) && (chunk.key?("candidates") || chunk.key?("usageMetadata"))
+    end
 
     def model_path(model)
       model = model.to_s

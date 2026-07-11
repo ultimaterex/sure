@@ -1,8 +1,14 @@
 <%
-  active = Setting.llm_provider.to_s.downcase == "anthropic" ? "anthropic" : "openai"
+  requested = Setting.llm_provider.to_s.downcase
+  active = %w[openai anthropic gemini].include?(requested) ? requested : "openai"
   locked = ENV["LLM_PROVIDER"].present?
-  providers = [ [ "openai", t(".provider_openai") ], [ "anthropic", t(".provider_anthropic") ] ]
-  active_configured = active == "anthropic" ? Provider::Anthropic.configured? : Provider::Openai.configured?
+  providers = [ [ "openai", t(".provider_openai") ], [ "anthropic", t(".provider_anthropic") ], [ "gemini", t(".provider_gemini") ] ]
+  active_configured =
+    case active
+    when "anthropic" then Provider::Anthropic.configured?
+    when "gemini" then Provider::Gemini.configured?
+    else Provider::Openai.configured?
+    end
 %>
 
 <div class="space-y-3">

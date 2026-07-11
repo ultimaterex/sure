@@ -220,4 +220,43 @@ class Provider::GeminiTest < ActiveSupport::TestCase
     assert_not response.success?
     assert_kind_of Provider::Gemini::Error, response.error
   end
+
+  # --- SSE streaming ---------------------------------------------------------
+  test "StreamParser splits SSE events and decodes JSON" do
+    parser = Provider::Gemini::StreamParser.new
+    seen = []
+    parser.push("data: {\"a\":1}\n\ndata: {\"b\":2}\n\n") { |json| seen << json }
+    assert_equal [ { "a" => 1 }, { "b" => 2 } ], seen
+  end
+
+  test "StreamParser buffers partial events across fragments and ignores [DONE]" do
+    parser = Provider::Gemini::StreamParser.new
+    seen = []
+    parser.push("data: {\"x\":") { |json| seen << json }
+    assert_empty seen
+    parser.push("1}\n\ndata: [DONE]\n\n") { |json| seen << json }
+    assert_equal [ { "x" => 1 } ], seen
+  end
+
+  test "streaming emits text deltas then the assembled final response" do
+    with_env_overrides("GEMINI_STREAMING" => "true") do
+      chunk1 = { "candidates" => [ { "content" => { "parts" => [ { "text" => "Hel" } ] } } ] }
+      chunk2 = {
+        "candidates" => [ { "content" => { "parts" => [ { "text" => "lo" } ] } } ],
+        "usageMetadata" => { "promptTokenCount" => 2, "candidatesTokenCount" => 1, "totalTokenCount" => 3 }
+      }
+
+      fake = mock
+      fake.stubs(:stream_generate_content).multiple_yields([ chunk1 ], [ chunk2 ]).returns(nil)
+      Provider::Gemini::Client.stubs(:new).returns(fake)
+
+      chunks = []
+      Provider::Gemini.new("k").chat_response("hi", model: "gemini-2.5-flash", streamer: ->(c) { chunks << c })
+
+      deltas = chunks.select { |c| c.type == "output_text" }.map(&:data)
+      final = chunks.find { |c| c.type == "response" }
+      assert_equal %w[Hel lo], deltas
+      assert_equal "Hello", final.data.messages.first.output_text
+    end
+  end
 end

@@ -24,7 +24,9 @@ class Provider::Registry
     # one configured) keeps working. Returns nil when neither is configured —
     # callers guard on that.
     def preferred_llm_provider
-      order = Setting.llm_provider == "anthropic" ? %i[anthropic openai] : %i[openai anthropic]
+      providers = %i[openai anthropic gemini]
+      preferred = Setting.llm_provider&.to_sym
+      order = providers.include?(preferred) ? [ preferred, *(providers - [ preferred ]) ] : providers
       order.each do |name|
         provider = get_provider(name)
         return provider if provider

@@ -151,24 +151,15 @@ class Provider::Gemini < Provider
       )
 
       request = config.build_request(model: model)
-      effective_model = model.presence || @default_model
+      resolved = effective_model(model)
 
       begin
-        raw = client.generate_content(model: effective_model, body: request[:body])
-        parsed = Provider::Gemini::ChatParser.new(raw).parsed
-        usage = Provider::Gemini::Usage.from_metadata(raw["usageMetadata"])
-
-        # Gemini's generateContent is synchronous; when a streamer is supplied we
-        # replay the finished result through it (output text, then the response),
-        # matching how the OpenAI generic path drives the assistant.
-        if streamer.present?
-          parsed.messages.each do |message|
-            next if message.output_text.blank?
-
-            streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: message.output_text, usage: nil))
+        parsed, usage =
+          if streamer.present? && streaming_enabled?
+            stream_chat_response(streamer: streamer, model: resolved, body: request[:body])
+          else
+            sync_chat_response(streamer: streamer, model: resolved, body: request[:body])
           end
-          streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "response", data: parsed, usage: usage))
-        end
 
         record_llm_usage(family: family, model: model, operation: "chat", usage: usage)
         parsed
@@ -184,6 +175,72 @@ class Provider::Gemini < Provider
 
     def default_max_tokens
       ENV.fetch("GEMINI_MAX_TOKENS", 4096).to_i
+    end
+
+    # SSE streaming is opt-in until the wire format is confirmed against a live
+    # key; the sync path (below) is the default and drives the assistant fine.
+    def streaming_enabled?
+      ActiveModel::Type::Boolean.new.cast(ENV.fetch("GEMINI_STREAMING", false))
+    end
+
+    # generateContent is synchronous. When a streamer is supplied we replay the
+    # finished result through it (output text, then the response), matching how
+    # the OpenAI generic path drives the assistant.
+    def sync_chat_response(streamer:, model:, body:)
+      raw = client.generate_content(model: model, body: body)
+      parsed = Provider::Gemini::ChatParser.new(raw).parsed
+      usage = Provider::Gemini::Usage.from_metadata(raw["usageMetadata"])
+
+      if streamer.present?
+        parsed.messages.each do |message|
+          next if message.output_text.blank?
+
+          streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: message.output_text, usage: nil))
+        end
+        streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "response", data: parsed, usage: usage))
+      end
+
+      [ parsed, usage ]
+    end
+
+    # True SSE streaming via streamGenerateContent. Emits text deltas as they
+    # arrive, accumulates text + functionCall parts, then emits the assembled
+    # final response so the caller gets the same shape as the sync path.
+    def stream_chat_response(streamer:, model:, body:)
+      text = +""
+      function_parts = []
+      usage = {}
+      response_id = nil
+      model_version = nil
+
+      client.stream_generate_content(model: model, body: body) do |chunk|
+        response_id ||= chunk["responseId"]
+        model_version ||= chunk["modelVersion"]
+
+        Array(chunk.dig("candidates", 0, "content", "parts")).each do |part|
+          if part["text"].present?
+            text << part["text"]
+            streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: part["text"], usage: nil))
+          elsif part["functionCall"]
+            function_parts << part
+          end
+        end
+
+        usage = Provider::Gemini::Usage.from_metadata(chunk["usageMetadata"]) if chunk["usageMetadata"].present?
+      end
+
+      final_parts = []
+      final_parts << { "text" => text } unless text.empty?
+      final_parts.concat(function_parts)
+
+      parsed = Provider::Gemini::ChatParser.new(
+        "responseId" => response_id,
+        "modelVersion" => model_version,
+        "candidates" => [ { "content" => { "parts" => final_parts } } ]
+      ).parsed
+
+      streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "response", data: parsed, usage: usage))
+      [ parsed, usage ]
     end
 
     # Preserve the response body (captured in Error#details) through the

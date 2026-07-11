@@ -221,9 +221,42 @@ class Settings::HostingsController < ApplicationController
       Setting.anthropic_model = hosting_params[:anthropic_model].presence
     end
 
+    if hosting_params.key?(:gemini_access_token)
+      token_param = hosting_params[:gemini_access_token].to_s.strip
+      unless token_param.blank? || token_param == "********"
+        Setting.gemini_access_token = token_param
+      end
+    end
+
+    if hosting_params.key?(:gemini_base_url)
+      raw_base_url = hosting_params[:gemini_base_url].to_s.strip
+      if raw_base_url.blank?
+        Setting.gemini_base_url = nil
+      else
+        parsed = URI.parse(raw_base_url) rescue nil
+        unless parsed.is_a?(URI::HTTP)
+          raise Setting::ValidationError, t(".invalid_gemini_base_url")
+        end
+        effective_model =
+          if hosting_params.key?(:gemini_model)
+            hosting_params[:gemini_model].to_s.strip
+          else
+            Setting.gemini_model.to_s.strip
+          end
+        if effective_model.blank?
+          raise Setting::ValidationError, t(".gemini_model_required_for_base_url")
+        end
+        Setting.gemini_base_url = raw_base_url
+      end
+    end
+
+    if hosting_params.key?(:gemini_model)
+      Setting.gemini_model = hosting_params[:gemini_model].presence
+    end
+
     if hosting_params.key?(:llm_provider)
       provider = hosting_params[:llm_provider].to_s
-      if %w[openai anthropic].include?(provider)
+      if %w[openai anthropic gemini].include?(provider)
         Setting.llm_provider = provider
       end
     end
@@ -293,7 +326,7 @@ class Settings::HostingsController < ApplicationController
   private
     def hosting_params
       return ActionController::Parameters.new unless params.key?(:setting)
-      params.require(:setting).permit(:onboarding_state, :require_email_confirmation, :invite_only_default_family_id, :brand_fetch_client_id, :brand_fetch_high_res_logos, :twelve_data_api_key, :tiingo_api_key, :eodhd_api_key, :alpha_vantage_api_key, :tinkoff_invest_api_key, :openai_access_token, :openai_oauth_token, :openai_oauth_account_id, :openai_uri_base, :openai_model, :openai_json_mode, :anthropic_access_token, :anthropic_base_url, :anthropic_model, :llm_provider, :llm_context_window, :llm_max_response_tokens, :llm_max_items_per_call, :exchange_rate_provider, :securities_provider, :syncs_include_pending, :auto_sync_enabled, :auto_sync_time, :external_assistant_url, :external_assistant_token, :external_assistant_agent_id, securities_providers: [])
+      params.require(:setting).permit(:onboarding_state, :require_email_confirmation, :invite_only_default_family_id, :brand_fetch_client_id, :brand_fetch_high_res_logos, :twelve_data_api_key, :tiingo_api_key, :eodhd_api_key, :alpha_vantage_api_key, :tinkoff_invest_api_key, :openai_access_token, :openai_oauth_token, :openai_oauth_account_id, :openai_uri_base, :openai_model, :openai_json_mode, :anthropic_access_token, :anthropic_base_url, :anthropic_model, :gemini_access_token, :gemini_base_url, :gemini_model, :llm_provider, :llm_context_window, :llm_max_response_tokens, :llm_max_items_per_call, :exchange_rate_provider, :securities_provider, :syncs_include_pending, :auto_sync_enabled, :auto_sync_time, :external_assistant_url, :external_assistant_token, :external_assistant_agent_id, securities_providers: [])
     end
 
     def update_assistant_type
