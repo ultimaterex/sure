@@ -10,7 +10,8 @@ class ToolCall::Function < ToolCall
         provider_call_id: function_request.call_id,
         function_name: function_request.function_name,
         function_arguments: function_request.function_args,
-        function_result: result
+        function_result: result,
+        thought_signature: function_request.thought_signature
       )
     end
   end
@@ -20,7 +21,8 @@ class ToolCall::Function < ToolCall
       call_id: provider_call_id,
       name: function_name,
       arguments: function_arguments,
-      output: function_result
+      output: function_result,
+      thought_signature: thought_signature
     }
   end
 

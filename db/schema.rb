@@ -2020,6 +2020,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_000000) do
     t.string "provider_id", null: false
     t.string "type", null: false
     t.datetime "updated_at", null: false
+    t.string "thought_signature"
     t.index ["message_id"], name: "index_tool_calls_on_message_id"
   end
 
