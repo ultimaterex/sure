@@ -20,7 +20,11 @@ class ProviderMerchant::Enhancer
         family: @family
       )
 
-      next unless result.success?
+      unless result.success?
+        raise Provider::RateLimitError, result.error.message if Provider::RateLimitError.rate_limited?(result.error)
+
+        next
+      end
 
       result.data.each do |enhancement|
         next unless enhancement.business_url.present?
