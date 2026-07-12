@@ -1,44 +1,63 @@
 require "test_helper"
 
 class Provider::GeminiTest < ActiveSupport::TestCase
-  def stub_client(raw)
-    fake = mock
-    fake.stubs(:generate_content).returns(raw)
-    Provider::Gemini::Client.stubs(:new).returns(fake)
-    fake
+  # Fake client that records request bodies and replays scripted Interaction
+  # resources across successive create_interaction calls.
+  class ScriptedInteractionClient
+    attr_reader :bodies
+
+    def initialize(*responses)
+      @responses = responses
+      @bodies = []
+    end
+
+    def create_interaction(body:)
+      @bodies << body
+      @responses[@bodies.size - 1] || @responses.last
+    end
+  end
+
+  def stub_interactions(*responses)
+    client = ScriptedInteractionClient.new(*responses)
+    Provider::Gemini::Client.stubs(:new).returns(client)
+    client
+  end
+
+  def model_output_interaction(id:, text:, usage: { "total_input_tokens" => 1, "total_output_tokens" => 1, "total_tokens" => 2 })
+    {
+      "id" => id,
+      "status" => "completed",
+      "steps" => [ { "type" => "model_output", "content" => [ { "type" => "text", "text" => text } ] } ],
+      "usage" => usage
+    }
   end
 
   test "parses a text chat response" do
-    stub_client(
-      "responseId" => "resp_1",
-      "modelVersion" => "gemini-2.5-flash",
-      "candidates" => [ { "content" => { "role" => "model", "parts" => [ { "text" => "Hello!" } ] }, "finishReason" => "STOP" } ],
-      "usageMetadata" => { "promptTokenCount" => 10, "candidatesTokenCount" => 3, "totalTokenCount" => 13 }
+    stub_interactions(
+      model_output_interaction(id: "int_1", text: "Hello!",
+        usage: { "total_input_tokens" => 10, "total_output_tokens" => 3, "total_tokens" => 13 })
     )
 
-    provider = Provider::Gemini.new("test-key")
-    response = provider.chat_response("hi", model: "gemini-2.5-flash")
+    response = Provider::Gemini.new("test-key").chat_response("hi", model: "gemini-2.5-flash")
 
     assert response.success?
+    assert_equal "int_1", response.data.id
     assert_equal 1, response.data.messages.size
     assert_equal "Hello!", response.data.messages.first.output_text
     assert_empty response.data.function_requests
   end
 
-  test "captures a function call with its thought signature" do
-    stub_client(
-      "responseId" => "resp_2",
-      "candidates" => [ {
-        "content" => { "parts" => [ {
-          "functionCall" => { "name" => "get_transactions", "args" => { "q" => "utilities" } },
-          "thoughtSignature" => "SIG_A"
-        } ] }
-      } ],
-      "usageMetadata" => {}
+  test "captures a function call from a function_call step" do
+    stub_interactions(
+      {
+        "id" => "int_2",
+        "status" => "requires_action",
+        "steps" => [ { "type" => "function_call", "id" => "fc_1", "name" => "get_transactions", "arguments" => { "q" => "utilities" } } ],
+        "usage" => {}
+      }
     )
 
-    provider = Provider::Gemini.new("test-key")
-    response = provider.chat_response(
+    response = Provider::Gemini.new("test-key").chat_response(
       "hi",
       model: "gemini-2.5-flash",
       functions: [ { name: "get_transactions", description: "d", params_schema: { type: "object" } } ]
@@ -46,25 +65,55 @@ class Provider::GeminiTest < ActiveSupport::TestCase
 
     request = response.data.function_requests.first
     assert_equal "get_transactions", request.function_name
-    assert_equal "SIG_A", request.thought_signature
+    assert_equal "fc_1", request.call_id
     assert_equal({ "q" => "utilities" }, JSON.parse(request.function_args))
   end
 
-  test "sync-replay path (streaming disabled) drives the streamer with output then response" do
-    with_env_overrides("GEMINI_STREAMING" => "false") do
-      stub_client(
-        "responseId" => "resp_3",
-        "candidates" => [ { "content" => { "parts" => [ { "text" => "Answer" } ] } } ],
-        "usageMetadata" => { "promptTokenCount" => 1, "candidatesTokenCount" => 1, "totalTokenCount" => 2 }
-      )
+  test "replays the interaction through the streamer as output_text then response" do
+    stub_interactions(model_output_interaction(id: "int_3", text: "Answer"))
 
-      chunks = []
-      provider = Provider::Gemini.new("test-key")
-      provider.chat_response("hi", model: "gemini-2.5-flash", streamer: ->(c) { chunks << c })
+    chunks = []
+    Provider::Gemini.new("test-key").chat_response("hi", model: "gemini-2.5-flash", streamer: ->(c) { chunks << c })
 
-      assert_equal %w[output_text response], chunks.map(&:type)
-      assert_equal "Answer", chunks.first.data
-    end
+    assert_equal %w[output_text response], chunks.map(&:type)
+    assert_equal "Answer", chunks.first.data
+  end
+
+  test "multi-step tool calling threads previous_interaction_id and sends function_result steps" do
+    client = stub_interactions(
+      {
+        "id" => "int_1",
+        "status" => "requires_action",
+        "steps" => [ { "type" => "function_call", "id" => "fc_1", "name" => "get_transactions", "arguments" => { "q" => "x" } } ],
+        "usage" => { "total_input_tokens" => 100, "total_output_tokens" => 25, "total_tokens" => 125 }
+      },
+      model_output_interaction(id: "int_2", text: "You spent $420.")
+    )
+    functions = [ { name: "get_transactions", description: "d", params_schema: { type: "object" } } ]
+    provider = Provider::Gemini.new("k")
+
+    # First call: no function_results -> history + prompt, and NO previous_interaction_id
+    # (the cross-turn id may be stale/expired or from another provider).
+    r1 = provider.chat_response("find unusual", model: "gemini-3.1-flash-lite", functions: functions, previous_response_id: "stale_cross_turn")
+    assert_equal "int_1", r1.data.id
+    assert_equal "fc_1", r1.data.function_requests.first.call_id
+
+    # Follow-up: function_results present -> function_result steps + the fresh previous_interaction_id.
+    r2 = provider.chat_response(
+      "find unusual",
+      model: "gemini-3.1-flash-lite",
+      functions: functions,
+      function_results: [ { call_id: "fc_1", name: "get_transactions", output: "[]" } ],
+      previous_response_id: "int_1"
+    )
+    assert_equal "You spent $420.", r2.data.messages.first.output_text
+
+    first, second = client.bodies
+    assert_not first.key?(:previous_interaction_id), "first call must not chain a (possibly stale) cross-turn id"
+    assert_equal "user_input", first[:input].last[:type]
+    assert_equal "int_1", second[:previous_interaction_id]
+    assert_equal "function_result", second[:input].first[:type]
+    assert_equal "fc_1", second[:input].first[:call_id]
   end
 
   test "supports gemini models and rejects others" do
@@ -263,81 +312,6 @@ class Provider::GeminiTest < ActiveSupport::TestCase
     assert_equal [ { "x" => 1 } ], seen
   end
 
-  test "streaming emits text deltas then the assembled final response" do
-    with_env_overrides("GEMINI_STREAMING" => "true") do
-      chunk1 = { "candidates" => [ { "content" => { "parts" => [ { "text" => "Hel" } ] } } ] }
-      chunk2 = {
-        "candidates" => [ { "content" => { "parts" => [ { "text" => "lo" } ] } } ],
-        "usageMetadata" => { "promptTokenCount" => 2, "candidatesTokenCount" => 1, "totalTokenCount" => 3 }
-      }
-
-      fake = mock
-      fake.stubs(:stream_generate_content).multiple_yields([ chunk1 ], [ chunk2 ]).returns(nil)
-      Provider::Gemini::Client.stubs(:new).returns(fake)
-
-      chunks = []
-      Provider::Gemini.new("k").chat_response("hi", model: "gemini-2.5-flash", streamer: ->(c) { chunks << c })
-
-      deltas = chunks.select { |c| c.type == "output_text" }.map(&:data)
-      final = chunks.find { |c| c.type == "response" }
-      assert_equal %w[Hel lo], deltas
-      assert_equal "Hello", final.data.messages.first.output_text
-    end
-  end
-
-  test "streaming emits assembled text when the model delivers it in one final chunk" do
-    with_env_overrides("GEMINI_STREAMING" => "true") do
-      chunk = {
-        "responseId" => "resp_final",
-        "candidates" => [ { "content" => { "parts" => [ { "text" => "Here are your spending insights." } ] } } ],
-        "usageMetadata" => { "promptTokenCount" => 100, "candidatesTokenCount" => 8, "totalTokenCount" => 108 }
-      }
-
-      fake = mock
-      fake.stubs(:stream_generate_content).yields(chunk).returns(nil)
-      Provider::Gemini::Client.stubs(:new).returns(fake)
-
-      chunks = []
-      Provider::Gemini.new("k").chat_response("hi", model: "gemini-2.5-flash", streamer: ->(c) { chunks << c })
-
-      deltas = chunks.select { |c| c.type == "output_text" }.map(&:data).join
-      assert_equal "Here are your spending insights.", deltas
-    end
-  end
-
-  test "streaming replays final text after tool calls so the responder marks the turn answered" do
-    with_env_overrides("GEMINI_STREAMING" => "true") do
-      tool_chunk = {
-        "responseId" => "resp_tool",
-        "candidates" => [ { "content" => { "parts" => [ {
-          "functionCall" => { "name" => "get_transactions", "args" => { "limit" => 10 } },
-          "thoughtSignature" => "SIG_A"
-        } ] } } ]
-      }
-      answer_chunk = {
-        "responseId" => "resp_tool",
-        "candidates" => [ { "content" => { "parts" => [ { "text" => "You spent $420 on groceries." } ] } } ],
-        "usageMetadata" => { "promptTokenCount" => 50, "candidatesTokenCount" => 10, "totalTokenCount" => 60 }
-      }
-
-      fake = mock
-      fake.stubs(:stream_generate_content).multiple_yields([ tool_chunk ], [ answer_chunk ]).returns(nil)
-      Provider::Gemini::Client.stubs(:new).returns(fake)
-
-      chunks = []
-      response = Provider::Gemini.new("k").chat_response(
-        "hi",
-        model: "gemini-2.5-flash",
-        functions: [ { name: "get_transactions", description: "d", params_schema: { type: "object" } } ],
-        streamer: ->(c) { chunks << c }
-      )
-
-      assert response.success?
-      assert_equal "get_transactions", response.data.function_requests.first.function_name
-      assert_equal "You spent $420 on groceries.", chunks.select { |c| c.type == "output_text" }.map(&:data).join
-    end
-  end
-
   # --- Pricing (#1) ----------------------------------------------------------
   test "gemini 3.x models have pricing" do
     assert_not_nil LlmUsage.calculate_cost(model: "gemini-3.1-flash-lite", prompt_tokens: 1000, completion_tokens: 1000)
@@ -394,5 +368,94 @@ class Provider::GeminiTest < ActiveSupport::TestCase
     assert_not body.key?(:systemInstruction)
     assert_not body.key?(:tools)
     assert body[:contents].present?
+  end
+
+  # --- InteractionConfig -----------------------------------------------------
+  test "InteractionConfig first call sends history + prompt and no previous_interaction_id" do
+    history = [
+      OpenStruct.new(role: "user", content: "earlier q"),
+      OpenStruct.new(role: "assistant", content: "earlier a")
+    ]
+
+    body = Provider::Gemini::InteractionConfig.new(
+      prompt: "now",
+      instructions: "system",
+      conversation_history: history,
+      functions: [ { name: "f", description: "d", params_schema: { type: "object" } } ],
+      previous_interaction_id: "stale_int"
+    ).build_request(model: "gemini-3.1-flash-lite")
+
+    assert_equal "system", body[:system_instruction]
+    assert_equal "function", body[:tools].first[:type]
+    assert_not body.key?(:previous_interaction_id)
+    assert_equal %w[user_input model_output user_input], body[:input].map { |step| step[:type] }
+    assert_equal "now", body[:input].last[:content].first[:text]
+  end
+
+  test "InteractionConfig follow-up sends function_result steps and chains previous_interaction_id" do
+    body = Provider::Gemini::InteractionConfig.new(
+      prompt: "now",
+      function_results: [ { call_id: "fc_1", name: "get_transactions", output: [ 1, 2 ] } ],
+      previous_interaction_id: "int_1"
+    ).build_request(model: "m")
+
+    assert_equal "int_1", body[:previous_interaction_id]
+    step = body[:input].first
+    assert_equal "function_result", step[:type]
+    assert_equal "fc_1", step[:call_id]
+    assert_equal "get_transactions", step[:name]
+    assert_equal "[1,2]", step[:result].first[:text]
+  end
+
+  test "InteractionConfig strips Gemini-unsupported schema keywords from tool parameters" do
+    functions = [ {
+      name: "search",
+      description: "d",
+      params_schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: { tags: { type: "array", uniqueItems: true, items: { type: "string" } } },
+        required: [ "tags" ]
+      }
+    } ]
+
+    body = Provider::Gemini::InteractionConfig.new(prompt: "hi", functions: functions).build_request(model: "m")
+    params = body[:tools].first[:parameters]
+
+    assert_not params.key?(:additionalProperties)
+    assert_not params[:properties][:tags].key?(:uniqueItems)
+    assert_equal [ "tags" ], params[:required]
+  end
+
+  # --- InteractionParser -----------------------------------------------------
+  test "InteractionParser extracts model_output text and function_call requests" do
+    parsed = Provider::Gemini::InteractionParser.new(
+      "id" => "int_9",
+      "model" => "gemini-3.1-flash-lite",
+      "steps" => [
+        { "type" => "thought", "signature" => "sig" },
+        { "type" => "function_call", "id" => "fc_1", "name" => "get_accounts", "arguments" => { "limit" => 5 } },
+        { "type" => "model_output", "content" => [ { "type" => "text", "text" => "Here " }, { "type" => "text", "text" => "you go." } ] }
+      ]
+    ).parsed
+
+    assert_equal "int_9", parsed.id
+    assert_equal "Here you go.", parsed.messages.first.output_text
+    assert_equal "get_accounts", parsed.function_requests.first.function_name
+    assert_equal "fc_1", parsed.function_requests.first.call_id
+    assert_equal({ "limit" => 5 }, JSON.parse(parsed.function_requests.first.function_args))
+  end
+
+  # --- Usage (Interactions) --------------------------------------------------
+  test "usage maps interaction usage field names" do
+    usage = Provider::Gemini::Usage.from_interaction(
+      "total_input_tokens" => 100, "total_output_tokens" => 25, "total_tokens" => 125,
+      "total_cached_tokens" => 40, "total_thought_tokens" => 12
+    )
+
+    assert_equal 100, usage["input_tokens"]
+    assert_equal 25, usage["output_tokens"]
+    assert_equal 125, usage["total_tokens"]
+    assert_equal 40, usage["cache_read_input_tokens"]
   end
 end

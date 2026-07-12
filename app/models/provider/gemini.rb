@@ -126,6 +126,12 @@ class Provider::Gemini < Provider
   end
 
   # --- Chat ------------------------------------------------------------------
+  #
+  # Uses the native Interactions API (stateful, GA). The responder drives
+  # multi-step tool calling by passing back a `previous_response_id` — mapped
+  # here to `previous_interaction_id` — so the server retains the whole turn's
+  # context (including thought signatures) across tool rounds. See
+  # Provider::Gemini::InteractionConfig for how the request is assembled.
   def chat_response(
     prompt,
     model:,
@@ -141,38 +147,30 @@ class Provider::Gemini < Provider
     family: nil
   )
     with_provider_response do
-      config = Provider::Gemini::ChatConfig.new(
+      resolved = effective_model(model)
+
+      config = Provider::Gemini::InteractionConfig.new(
         prompt: prompt,
         instructions: instructions,
         functions: functions,
         function_results: function_results,
         conversation_history: conversation_history,
+        previous_interaction_id: previous_response_id,
         default_max_tokens: default_max_tokens
       )
-
-      resolved = effective_model(model)
-
-      # Cache the stable system instruction + tools and reference them, cutting
-      # per-request input tokens. Best-effort: nil when unavailable → inline.
-      cached_content = context_cache.fetch(
-        model: resolved,
-        system_instruction: config.system_instruction,
-        tools: config.tools
-      )
-      request = config.build_request(model: model, cached_content: cached_content)
+      body = config.build_request(model: resolved)
 
       begin
-        parsed, usage =
-          if streamer.present? && streaming_enabled?
-            stream_chat_response(streamer: streamer, model: resolved, body: request[:body])
-          else
-            sync_chat_response(streamer: streamer, model: resolved, body: request[:body])
-          end
+        interaction = client.create_interaction(body: body)
+        parsed = Provider::Gemini::InteractionParser.new(interaction).parsed
+        usage = Provider::Gemini::Usage.from_interaction(interaction["usage"])
 
-        record_llm_usage(family: family, model: model, operation: "chat", usage: usage)
+        replay_through_streamer(streamer, parsed, usage) if streamer.present?
+
+        record_llm_usage(family: family, model: resolved, operation: "chat", usage: usage)
         parsed
       rescue => e
-        record_llm_usage(family: family, model: model, operation: "chat", error: e)
+        record_llm_usage(family: family, model: resolved, operation: "chat", error: e)
         raise
       end
     end
@@ -181,21 +179,12 @@ class Provider::Gemini < Provider
   private
     attr_reader :client
 
-    def context_cache
-      @context_cache ||= Provider::Gemini::ContextCache.new(client)
-    end
-
     def default_max_tokens
       ENV.fetch("GEMINI_MAX_TOKENS", 4096).to_i
     end
 
-    # SSE streaming (token-by-token chat). Precedence: GEMINI_STREAMING env wins
-    # (and locks the UI toggle); otherwise the Setting toggle, default on. Set to
-    # false to fall back to the sync path if the wire format ever misbehaves.
-    def streaming_enabled?
-      self.class.flag_enabled?("GEMINI_STREAMING", Setting.gemini_streaming)
-    end
-
+    # Kept for Provider::Gemini::ContextCache and the Gemini settings toggles:
+    # GEMINI_* env wins (and locks the UI toggle); otherwise the Setting value.
     def self.flag_enabled?(env_key, setting_value)
       env = ENV[env_key]
       return ActiveModel::Type::Boolean.new.cast(env) if env.present?
@@ -203,92 +192,18 @@ class Provider::Gemini < Provider
       ActiveModel::Type::Boolean.new.cast(setting_value)
     end
 
-    # generateContent is synchronous. When a streamer is supplied we replay the
-    # finished result through it (output text, then the response), matching how
-    # the OpenAI generic path drives the assistant.
-    def sync_chat_response(streamer:, model:, body:)
-      raw = client.generate_content(model: model, body: body)
-      parsed = Provider::Gemini::ChatParser.new(raw).parsed
-      usage = Provider::Gemini::Usage.from_metadata(raw["usageMetadata"])
+    # interactions.create is synchronous. When a streamer is supplied we replay
+    # the finished result through it (output text, then the response), matching
+    # how the OpenAI generic path drives the assistant. Token-by-token SSE is a
+    # follow-up: the streaming `interaction.completed` event omits usage, so the
+    # non-streaming call is used to keep cost tracking accurate.
+    def replay_through_streamer(streamer, parsed, usage)
+      parsed.messages.each do |message|
+        next if message.output_text.blank?
 
-      if streamer.present?
-        parsed.messages.each do |message|
-          next if message.output_text.blank?
-
-          streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: message.output_text, usage: nil))
-        end
-        streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "response", data: parsed, usage: usage))
+        streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: message.output_text, usage: nil))
       end
-
-      [ parsed, usage ]
-    end
-
-    # True SSE streaming via streamGenerateContent. Emits text deltas as they
-    # arrive, accumulates text + functionCall parts, then emits the assembled
-    # final response so the caller gets the same shape as the sync path.
-    def stream_chat_response(streamer:, model:, body:)
-      text = +""
-      function_parts = []
-      usage = {}
-      response_id = nil
-      model_version = nil
-
-      client.stream_generate_content(model: model, body: body) do |chunk|
-        response_id ||= chunk["responseId"]
-        model_version ||= chunk["modelVersion"]
-
-        chunk_function_parts = []
-        Array(chunk.dig("candidates", 0, "content", "parts")).each do |part|
-          if part["text"].present?
-            text << part["text"]
-            if streamer.present?
-              streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: part["text"], usage: nil))
-            end
-          elsif part["functionCall"]
-            chunk_function_parts << part
-          end
-        end
-        # Streaming chunks carry the latest assembled functionCall state, not
-        # additive deltas — keep the most recent snapshot.
-        function_parts = chunk_function_parts if chunk_function_parts.any?
-
-        usage = Provider::Gemini::Usage.from_metadata(chunk["usageMetadata"]) if chunk["usageMetadata"].present?
-      end
-
-      final_parts = []
-      final_parts << { "text" => text } unless text.empty?
-      final_parts.concat(function_parts)
-
-      parsed = Provider::Gemini::ChatParser.new(
-        "responseId" => response_id,
-        "modelVersion" => model_version,
-        "candidates" => [ { "content" => { "parts" => final_parts } } ]
-      ).parsed
-
-      if streamer.present?
-        # Match sync_chat_response: the responder only listens for output_text
-        # chunks, so text that arrives only in the final assembled response (common
-        # after tool calls) must still be emitted here.
-        emit_remaining_streamed_text(streamer, text, parsed)
-        streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "response", data: parsed, usage: usage))
-      end
-
-      [ parsed, usage ]
-    end
-
-    def emit_remaining_streamed_text(streamer, streamed_text, parsed)
-      assembled = parsed.messages.filter_map(&:output_text).join
-      return if assembled.blank?
-
-      remaining =
-        if streamed_text.present? && assembled.start_with?(streamed_text)
-          assembled[streamed_text.length..]
-        else
-          assembled
-        end
-      return if remaining.blank?
-
-      streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "output_text", data: remaining, usage: nil))
+      streamer.call(Provider::LlmConcept::ChatStreamChunk.new(type: "response", data: parsed, usage: usage))
     end
 
     # Preserve the response body (captured in Error#details) through the

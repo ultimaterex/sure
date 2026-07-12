@@ -25,6 +25,19 @@ class Provider::Gemini::Client
     handle_response(response)
   end
 
+  # Creates an Interaction (native, stateful chat turn). `body` is the full
+  # interactions request hash. Returns the parsed Interaction resource, whose
+  # `id` is threaded back as `previous_interaction_id` on follow-up calls.
+  def create_interaction(body:)
+    response = self.class.post(
+      "#{@base_url}/v1beta/interactions",
+      headers: headers,
+      body: body.to_json,
+      timeout: @timeout
+    )
+    handle_response(response)
+  end
+
   # Streaming generation over SSE. Yields each decoded response chunk. Chunks
   # that aren't model output (e.g. an error body streamed as fragments) are
   # filtered out; a non-200 status is raised after the stream completes.
