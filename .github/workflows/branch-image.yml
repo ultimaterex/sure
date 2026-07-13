@@ -1,19 +1,23 @@
-# Fast, on-demand image build for a single branch.
+# Fast image build for a single branch.
 #
 # Unlike `publish.yml`, this workflow:
-#   - runs ONLY when you trigger it (workflow_dispatch), never on push/schedule
+#   - runs automatically on every push to every branch, and can also be triggered
+#     manually (workflow_dispatch) for any branch
 #   - does NOT run the test/lint CI suite
 #   - builds linux/amd64 ONLY (no arm64) — much faster
 #   - tags the image with the slugified branch name, e.g.
 #     `feat/mercury-credit-support` -> ghcr.io/<owner>/<repo>:feat-mercury-credit-support
 #
-# Run it from: Actions -> "Build branch image (x86)" -> Run workflow -> pick a branch.
-# The workflow file only needs to live on the default branch (main) for the
-# dropdown to appear; it builds whatever branch you type in.
+# For push builds the workflow must exist on the branch being pushed (GitHub runs
+# the workflow version from that commit). For manual runs, open
+# Actions -> "Build branch image (x86)" -> Run workflow -> pick a branch.
 
 name: Build branch image (x86)
 
 on:
+  push:
+    branches:
+      - '**'
   workflow_dispatch:
     inputs:
       branch:
@@ -21,6 +25,11 @@ on:
         required: true
         type: string
         default: 'main'
+
+# One in-flight build per branch: a newer push cancels the previous run.
+concurrency:
+  group: branch-image-${{ github.event.inputs.branch || github.ref_name }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
@@ -40,21 +49,24 @@ jobs:
       - name: Check out the selected branch
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
-          ref: ${{ github.event.inputs.branch }}
+          # Manual runs build the requested branch; push builds the pushed one.
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
           persist-credentials: false
 
       - name: Compute image tag and commit SHA
         id: meta
         shell: bash
+        env:
+          BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
         run: |
-          SLUG="$(printf '%s' "${{ github.event.inputs.branch }}" | sed -E 's#[^a-zA-Z0-9._-]+#-#g; s#^-+##; s#-+$##')"
+          SLUG="$(printf '%s' "$BRANCH" | sed -E 's#[^a-zA-Z0-9._-]+#-#g; s#^-+##; s#-+$##')"
           if [[ -z "$SLUG" ]]; then
-            echo "::error::Could not derive a tag from branch '${{ github.event.inputs.branch }}'"
+            echo "::error::Could not derive a tag from branch '$BRANCH'"
             exit 1
           fi
           echo "tag=${SLUG}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "Building ${{ github.event.inputs.branch }} -> ${REGISTRY}/${IMAGE_NAME}:${SLUG}"
+          echo "Building ${BRANCH} -> ${REGISTRY}/${IMAGE_NAME}:${SLUG}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
