@@ -63,6 +63,19 @@ class Rule::ActionExecutor
       modified_count
     end
 
+    # Free-tier LLM keys enforce tight per-minute quotas. Spreading a bulk rule
+    # run's AI batches over time keeps them under the ceiling instead of firing a
+    # burst that all 429 and exhaust their retries. Self-hosters only (managed
+    # runs on provisioned quota); tunable via AI_ENRICHMENT_JOB_SPACING_SECONDS
+    # (0 disables the stagger). Returns an ActiveSupport::Duration or nil.
+    def bulk_enqueue_wait(index)
+      return nil unless family.self_hoster?
+
+      spacing = ENV.fetch("AI_ENRICHMENT_JOB_SPACING_SECONDS", 5).to_i
+      wait_seconds = index * spacing
+      wait_seconds.positive? ? wait_seconds.seconds : nil
+    end
+
   private
     attr_reader :rule
 
