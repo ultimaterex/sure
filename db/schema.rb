@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_14_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_22_000000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -992,6 +992,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_14_120000) do
     t.string "tags"
     t.string "ticker"
     t.datetime "updated_at", null: false
+    t.string "external_id"
+    t.string "source"
     t.index ["import_id", "source_row_number"], name: "index_import_rows_on_import_id_and_source_row_number", unique: true
     t.index ["import_id"], name: "index_import_rows_on_import_id"
     t.check_constraint "source_row_number > 0", name: "chk_import_rows_source_row_number_positive"
