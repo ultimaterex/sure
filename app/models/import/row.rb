@@ -10,6 +10,16 @@ class Import::Row < ApplicationRecord
 
   scope :ordered, -> { order(:source_row_number, :id) }
 
+  # Returns the external_id if present (for CSV import dedup control)
+  def external_id_present?
+    external_id.present? && external_id != ""
+  end
+
+  # Returns the source if present (for CSV import dedup control)
+  def source_present?
+    source.present? && source != ""
+  end
+
   def tags_list
     if tags.blank?
       [ "" ]

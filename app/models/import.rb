@@ -279,7 +279,9 @@ class Import < ApplicationRecord
         category: csv_value(row, category_col_label, "category").to_s,
         tags: csv_value(row, tags_col_label, "tags").to_s,
         entity_type: csv_value(row, entity_type_col_label, "entity_type", "account_type", "type").to_s,
-        notes: csv_value(row, notes_col_label, "notes").to_s
+        notes: csv_value(row, notes_col_label, "notes").to_s,
+        external_id: csv_value(row, external_id_col_label, "external_id", "transaction_id", "control").to_s,
+        source: csv_value(row, source_col_label, "source", "provider", "bank").to_s
       }
     end
 

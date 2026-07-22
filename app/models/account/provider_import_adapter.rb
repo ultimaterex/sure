@@ -708,19 +708,32 @@ class Account::ProviderImportAdapter
   end
 
   # Finds a potential duplicate transaction from manual entry or CSV import
-  # Matches on date, amount, currency, and optionally name
-  # Only matches transactions without external_id (manual/CSV imported)
+  # When external_id+source are provided, they are used as the primary dedup key
+  # Otherwise falls back to date/amount/currency/name heuristic matching
+  # Only matches transactions without external_id (manual/CSV imported) in heuristic mode
   #
   # @param date [Date, String] Transaction date
   # @param amount [BigDecimal, Numeric] Transaction amount
   # @param currency [String] Currency code
   # @param name [String, nil] Optional transaction name for more accurate matching
-  # @param exclude_entry_ids [Set, Array, nil] Entry IDs to exclude from the search (e.g., already claimed entries)
+  # @param external_id [String, nil] Unique control ID from bank (e.g., DSB transaction number)
+  # @param source [String, nil] Provider/bank source name (e.g., "dsb")
+  # @param exclude_entry_ids [Set, Array, nil] Entry IDs to exclude from the search
   # @return [Entry, nil] The duplicate entry or nil if not found
-  def find_duplicate_transaction(date:, amount:, currency:, name: nil, exclude_entry_ids: nil)
+  def find_duplicate_transaction(date:, amount:, currency:, name: nil, external_id: nil, source: nil, exclude_entry_ids: nil)
+    # Primary dedup: use external_id+source as the exact control key
+    if external_id.present? && source.present?
+      return account.entries.find_by(
+        external_id: external_id,
+        source: source,
+        entryable_type: "Transaction"
+      )
+    end
+
     # Convert date to Date object if it's a string
     date = Date.parse(date.to_s) unless date.is_a?(Date)
 
+    # Fallback heuristic matching:
     # Look for entries on the same account with:
     # 1. Same date
     # 2. Same amount (exact match)
