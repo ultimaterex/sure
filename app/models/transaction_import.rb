@@ -67,7 +67,9 @@ class TransactionImport < Import
               currency: effective_currency,
               notes: row.notes,
               import: self,
-              import_locked: true
+              import_locked: true,
+              external_id: row.external_id.presence,
+              source: row.source.presence
             )
           )
         end

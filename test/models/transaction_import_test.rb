@@ -444,6 +444,126 @@ class TransactionImportTest < ActiveSupport::TestCase
     assert_equal 1, credit_card.entries.where(import: @import).count
   end
 
+  test "parses external_id and source from CSV using header aliases" do
+    import_csv = <<~CSV
+      date,name,amount,transaction_id,bank
+      01/01/2024,Txn1,100,8491313:CURRENT-23072025-1,dsb
+    CSV
+
+    @import.update!(
+      raw_file_str: import_csv,
+      date_col_label: "date",
+      amount_col_label: "amount",
+      name_col_label: "name",
+      date_format: "%m/%d/%Y"
+    )
+
+    @import.generate_rows_from_csv
+    row = @import.rows.reload.first
+
+    assert row.valid?
+    assert_equal "8491313:CURRENT-23072025-1", row.external_id
+    assert_equal "dsb", row.source
+  end
+
+  test "does not create duplicate when external_id and source match an existing entry" do
+    account = accounts(:depository)
+
+    # Existing entry with a different date/amount/name than the CSV row, to prove
+    # the exact-match dedup on external_id+source takes priority over the heuristic
+    existing_entry = account.entries.create!(
+      date: Date.new(2024, 6, 1),
+      amount: 999,
+      currency: "USD",
+      name: "Provider Synced Name",
+      external_id: "8491313:CURRENT-23072025-1",
+      source: "dsb",
+      entryable: Transaction.new
+    )
+
+    import_csv = <<~CSV
+      date,name,amount,external_id,source
+      01/01/2024,Coffee Shop,100,8491313:CURRENT-23072025-1,dsb
+    CSV
+
+    @import.update!(
+      account: account,
+      raw_file_str: import_csv,
+      date_col_label: "date",
+      amount_col_label: "amount",
+      name_col_label: "name",
+      date_format: "%m/%d/%Y",
+      amount_type_strategy: "signed_amount",
+      signage_convention: "inflows_negative"
+    )
+
+    @import.generate_rows_from_csv
+    @import.reload
+
+    assert_no_difference -> { Entry.count } do
+      assert_no_difference -> { Transaction.count } do
+        @import.publish
+      end
+    end
+
+    assert_equal @import.id, existing_entry.reload.import_id
+  end
+
+  test "persists external_id and source on newly created entries so re-imports dedupe" do
+    account = accounts(:depository)
+
+    import_csv = <<~CSV
+      date,name,amount,external_id,source
+      01/01/2024,Coffee Shop,100,8491313:CURRENT-23072025-1,dsb
+    CSV
+
+    @import.update!(
+      account: account,
+      raw_file_str: import_csv,
+      date_col_label: "date",
+      amount_col_label: "amount",
+      name_col_label: "name",
+      date_format: "%m/%d/%Y",
+      amount_type_strategy: "signed_amount",
+      signage_convention: "inflows_negative"
+    )
+
+    @import.generate_rows_from_csv
+    @import.reload
+
+    assert_difference -> { Entry.count } => 1 do
+      @import.publish
+    end
+
+    created_entry = account.entries.order(:created_at).last
+    assert_equal "8491313:CURRENT-23072025-1", created_entry.external_id
+    assert_equal "dsb", created_entry.source
+
+    # Re-import the same CSV as a fresh import; it should match the entry created above
+    # via the exact-match external_id/source path and not create a duplicate
+    reimport = TransactionImport.new(family: @import.family, account: account)
+    reimport.update!(
+      raw_file_str: import_csv,
+      date_col_label: "date",
+      amount_col_label: "amount",
+      name_col_label: "name",
+      date_format: "%m/%d/%Y",
+      amount_type_strategy: "signed_amount",
+      signage_convention: "inflows_negative"
+    )
+
+    reimport.generate_rows_from_csv
+    reimport.reload
+
+    assert_no_difference -> { Entry.count } do
+      assert_no_difference -> { Transaction.count } do
+        reimport.publish
+      end
+    end
+
+    assert_equal reimport.id, created_entry.reload.import_id
+  end
+
   test "skips specified number of rows" do
     account = accounts(:depository)
     import_csv = <<~CSV
