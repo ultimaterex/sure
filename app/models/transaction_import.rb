@@ -31,14 +31,16 @@ class TransactionImport < Import
         effective_currency = currency_col_label.present? ? row.currency : (mapped_account.currency.presence || family.currency)
 
         # Check for duplicate transactions using the adapter's deduplication logic
-        # Pass claimed_entry_ids to exclude entries we've already matched in this import
-        # This ensures identical rows within the CSV are all imported as separate transactions
+        # If external_id/source are provided, they take priority as dedup keys
+        # Otherwise falls back to date/amount/currency/name matching
         adapter = Account::ProviderImportAdapter.new(mapped_account)
         duplicate_entry = adapter.find_duplicate_transaction(
           date: row.date_iso,
           amount: row.signed_amount,
           currency: effective_currency,
           name: row.name,
+          external_id: row.external_id.presence,
+          source: row.source.presence,
           exclude_entry_ids: claimed_entry_ids
         )
 
