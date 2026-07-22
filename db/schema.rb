@@ -577,12 +577,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_000000) do
     t.string "provider"
     t.jsonb "raw_payload"
     t.jsonb "raw_transactions_payload"
+    t.boolean "treat_balance_as_available_credit", default: false, null: false
     t.string "uid"
     t.datetime "updated_at", null: false
-    t.string "product"
-    t.decimal "credit_limit", precision: 19, scale: 4
-    t.jsonb "identification_hashes", default: []
-    t.boolean "treat_balance_as_available_credit", default: false, null: false
     t.index ["account_id"], name: "index_enable_banking_accounts_on_account_id"
     t.index ["enable_banking_item_id"], name: "index_enable_banking_accounts_on_enable_banking_item_id"
     t.index ["identification_hashes"], name: "index_enable_banking_accounts_on_identification_hashes", using: :gin
@@ -860,7 +857,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_000000) do
     t.index ["family_id", "state"], name: "index_goals_on_family_id_and_state"
     t.index ["family_id"], name: "index_goals_on_family_id"
     t.check_constraint "char_length(name::text) <= 255", name: "chk_savings_goals_name_length"
-    t.check_constraint "progress_basis::text = ANY (ARRAY['balance'::character varying, 'contributions'::character varying]::text[])", name: "chk_goals_progress_basis_enum"
+    t.check_constraint "progress_basis::text = ANY (ARRAY['balance'::character varying::text, 'contributions'::character varying::text])", name: "chk_goals_progress_basis_enum"
     t.check_constraint "state::text = ANY (ARRAY['active'::character varying::text, 'paused'::character varying::text, 'completed'::character varying::text, 'archived'::character varying::text])", name: "chk_savings_goals_state_enum"
     t.check_constraint "target_amount > 0::numeric", name: "chk_savings_goals_target_amount_positive"
   end
@@ -980,6 +977,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_000000) do
     t.string "effective_date"
     t.string "entity_type"
     t.string "exchange_operating_mic"
+    t.string "external_id"
     t.uuid "import_id", null: false
     t.string "merchant_color"
     t.string "merchant_website"
@@ -988,12 +986,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_000000) do
     t.string "price"
     t.string "qty"
     t.string "resource_type"
+    t.string "source"
     t.integer "source_row_number", null: false
     t.string "tags"
     t.string "ticker"
     t.datetime "updated_at", null: false
-    t.string "external_id"
-    t.string "source"
     t.index ["import_id", "source_row_number"], name: "index_import_rows_on_import_id_and_source_row_number", unique: true
     t.index ["import_id"], name: "index_import_rows_on_import_id"
     t.check_constraint "source_row_number > 0", name: "chk_import_rows_source_row_number_positive"
@@ -1173,8 +1170,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_000000) do
     t.index ["family_id", "dedup_key"], name: "index_insights_on_family_id_and_dedup_key", unique: true
     t.index ["family_id", "generated_at"], name: "index_insights_on_family_id_and_generated_at"
     t.index ["family_id", "status"], name: "index_insights_on_family_id_and_status"
-    t.check_constraint "priority::text = ANY (ARRAY['high'::character varying, 'medium'::character varying, 'low'::character varying]::text[])", name: "chk_insights_priority"
-    t.check_constraint "status::text = ANY (ARRAY['active'::character varying, 'read'::character varying, 'dismissed'::character varying, 'expired'::character varying]::text[])", name: "chk_insights_status"
+    t.check_constraint "priority::text = ANY (ARRAY['high'::character varying::text, 'medium'::character varying::text, 'low'::character varying::text])", name: "chk_insights_priority"
+    t.check_constraint "status::text = ANY (ARRAY['active'::character varying::text, 'read'::character varying::text, 'dismissed'::character varying::text, 'expired'::character varying::text])", name: "chk_insights_status"
   end
 
   create_table "investments", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -2018,9 +2015,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_000000) do
     t.uuid "message_id", null: false
     t.string "provider_call_id"
     t.string "provider_id", null: false
+    t.string "thought_signature"
     t.string "type", null: false
     t.datetime "updated_at", null: false
-    t.string "thought_signature"
     t.index ["message_id"], name: "index_tool_calls_on_message_id"
   end
 
