@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_06_28_200000) do
+ActiveRecord::Schema[7.2].define(version: 2026_07_22_000000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pgcrypto"
   enable_extension "plpgsql"
@@ -987,6 +987,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_06_28_200000) do
     t.integer "source_row_number", null: false
     t.string "merchant_color"
     t.string "merchant_website"
+    t.string "external_id"
+    t.string "source"
     t.index ["import_id", "source_row_number"], name: "index_import_rows_on_import_id_and_source_row_number", unique: true
     t.index ["import_id"], name: "index_import_rows_on_import_id"
     t.check_constraint "source_row_number > 0", name: "chk_import_rows_source_row_number_positive"
