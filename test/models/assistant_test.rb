@@ -156,6 +156,17 @@ class AssistantTest < ActiveSupport::TestCase
 
     sequence = sequence("provider_chat_response")
 
+    # Call #1 (function requests) must be first: the responder drives control
+    # flow off each response's return value, so the round that returns
+    # function_requests has to come before the text round.
+    @provider.expects(:chat_response).with do |message, **options|
+      assert_equal @expected_session_id, options[:session_id]
+      assert_equal @expected_user_identifier, options[:user_identifier]
+      assert_equal @expected_conversation_history, options[:messages]
+      options[:streamer].call(call1_response_chunk)
+      true
+    end.returns(call1_response).once.in_sequence(sequence)
+
     @provider.expects(:chat_response).with do |message, **options|
       assert_equal @expected_session_id, options[:session_id]
       assert_equal @expected_user_identifier, options[:user_identifier]
@@ -167,14 +178,6 @@ class AssistantTest < ActiveSupport::TestCase
       options[:streamer].call(call2_response_chunk)
       true
     end.returns(call2_response).once.in_sequence(sequence)
-
-    @provider.expects(:chat_response).with do |message, **options|
-      assert_equal @expected_session_id, options[:session_id]
-      assert_equal @expected_user_identifier, options[:user_identifier]
-      assert_equal @expected_conversation_history, options[:messages]
-      options[:streamer].call(call1_response_chunk)
-      true
-    end.returns(call1_response).once.in_sequence(sequence)
 
     assert_difference "AssistantMessage.count", 1 do
       @assistant.respond_to(@message)

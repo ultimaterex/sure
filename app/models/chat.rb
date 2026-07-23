@@ -58,14 +58,18 @@ class Chat < ApplicationRecord
     # provider's classes would later raise "no LLM provider supports model …"
     # even when the other provider is configured.
     def default_model
-      prefers_anthropic = Setting.llm_provider == "anthropic"
+      provider = Setting.llm_provider.to_s
 
-      if prefers_anthropic && Provider::Anthropic.configured?
+      if provider == "anthropic" && Provider::Anthropic.configured?
         Provider::Anthropic.effective_model.presence || Setting.anthropic_model
+      elsif provider == "gemini" && Provider::Gemini.configured?
+        Provider::Gemini.effective_model.presence || Setting.gemini_model
       elsif Provider::Openai.configured?
         Provider::Openai.effective_model.presence || Setting.openai_model
       elsif Provider::Anthropic.configured?
         Provider::Anthropic.effective_model.presence || Setting.anthropic_model
+      elsif Provider::Gemini.configured?
+        Provider::Gemini.effective_model.presence || Setting.gemini_model
       else
         Provider::Openai.effective_model.presence || Setting.openai_model
       end

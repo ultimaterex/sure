@@ -10,65 +10,69 @@ class Assistant::Responder
     listeners[event_name.to_sym] << block
   end
 
+  # Cap on sequential tool-call rounds within a single turn. Thinking models
+  # (e.g. Gemini) chain tool calls — call a tool, read the result, call another —
+  # so a turn needs more than one round-trip. Without a limit a turn could loop
+  # and run up spend, so we stop after MAX_TOOL_CALL_ROUNDS and let the model
+  # answer with what it has (or surface a graceful message).
+  MAX_TOOL_CALL_ROUNDS = 5
+
   def respond(previous_response_id: nil)
-    # Track whether response was handled by streamer
-    response_handled = false
+    # The provider streams output text through `text_streamer`; we drive control
+    # flow off each response's return value instead (works for both the streaming
+    # native path and the synchronous generic/custom-provider path).
+    @text_emitted = false
+    executed_tool_calls = []
 
-    # For the first response
-    streamer = proc do |chunk|
-      case chunk.type
-      when "output_text"
-        emit(:output_text, chunk.data)
-      when "response"
-        response = chunk.data
-        response_handled = true
+    response = get_llm_response(streamer: text_streamer, previous_response_id: previous_response_id)
 
-        if response.function_requests.any?
-          handle_follow_up_response(response)
-        else
-          emit(:response, { id: response.id })
-        end
-      end
+    rounds = 0
+    while response.function_requests.any? && rounds < MAX_TOOL_CALL_ROUNDS
+      rounds += 1
+
+      tool_calls = function_tool_caller.fulfill_requests(response.function_requests)
+      executed_tool_calls.concat(tool_calls)
+
+      # Record every tool call made this turn on the assistant message.
+      emit(:response, { id: response.id, function_tool_calls: executed_tool_calls })
+
+      # Feed this round's results back. Per-step (not accumulated): the native
+      # Responses API chains prior turns via previous_response_id and would
+      # reject re-submitted outputs; the generic path gets the triggering result.
+      response = get_llm_response(
+        streamer: text_streamer,
+        function_results: tool_calls.map(&:to_result),
+        previous_response_id: response.id
+      )
     end
 
-    response = get_llm_response(streamer: streamer, previous_response_id: previous_response_id)
+    # Never leave a blank, pending turn: the chat watchdog would later report it
+    # as "the assistant didn't respond". If the model produced no text (it wanted
+    # to keep calling tools past the cap, or returned nothing), surface a message.
+    emit(:output_text, no_answer_message) unless @text_emitted
 
-    # For synchronous (non-streaming) responses, handle function requests if not already handled by streamer
-    unless response_handled
-      if response && response.function_requests.any?
-        handle_follow_up_response(response)
-      elsif response
-        emit(:response, { id: response.id })
-      end
-    end
+    emit(:response, { id: response.id })
   end
 
   private
     attr_reader :message, :instructions, :function_tool_caller, :llm
 
-    def handle_follow_up_response(response)
-      streamer = proc do |chunk|
-        case chunk.type
-        when "output_text"
-          emit(:output_text, chunk.data)
-        when "response"
-          # We do not currently support function executions for a follow-up response (avoid recursive LLM calls that could lead to high spend)
-          emit(:response, { id: chunk.data.id })
-        end
+    # Streams assistant text to listeners and records that a turn produced text,
+    # so we can guarantee a non-blank response. Ignores "response" chunks — the
+    # loop in #respond uses each call's return value for control flow.
+    def text_streamer
+      proc do |chunk|
+        next unless chunk.type == "output_text"
+
+        @text_emitted = true
+        emit(:output_text, chunk.data)
       end
+    end
 
-      function_tool_calls = function_tool_caller.fulfill_requests(response.function_requests)
-
-      emit(:response, {
-        id: response.id,
-        function_tool_calls: function_tool_calls
-      })
-
-      # Get follow-up response with tool call results
-      get_llm_response(
-        streamer: streamer,
-        function_results: function_tool_calls.map(&:to_result),
-        previous_response_id: response.id
+    def no_answer_message
+      I18n.t(
+        "assistant.responder.no_answer",
+        default: "I wasn't able to finish answering that in a single turn — it needed more steps than I can take at once. Please try a narrower question or ask me to continue."
       )
     end
 

@@ -24,7 +24,9 @@ class Provider::Registry
     # one configured) keeps working. Returns nil when neither is configured —
     # callers guard on that.
     def preferred_llm_provider
-      order = Setting.llm_provider == "anthropic" ? %i[anthropic openai] : %i[openai anthropic]
+      providers = %i[openai anthropic gemini]
+      preferred = Setting.llm_provider&.to_sym
+      order = providers.include?(preferred) ? [ preferred, *(providers - [ preferred ]) ] : providers
       order.each do |name|
         provider = get_provider(name)
         return provider if provider
@@ -109,6 +111,19 @@ class Provider::Registry
         model = ENV["ANTHROPIC_MODEL"].presence || Setting.anthropic_model
 
         Provider::Anthropic.new(access_token, base_url: base_url, model: model)
+      end
+
+      def gemini
+        access_token = ENV["GEMINI_ACCESS_TOKEN"].presence ||
+                       ENV["GEMINI_API_KEY"].presence ||
+                       Setting.gemini_access_token
+
+        return nil unless access_token.present?
+
+        base_url = ENV["GEMINI_BASE_URL"].presence || Setting.gemini_base_url
+        model = ENV["GEMINI_MODEL"].presence || Setting.gemini_model
+
+        Provider::Gemini.new(access_token, base_url: base_url, model: model)
       end
 
       def yahoo_finance
@@ -196,9 +211,9 @@ class Provider::Registry
       when :securities
         %i[twelve_data yahoo_finance tiingo eodhd alpha_vantage mfapi binance_public moex_public tinkoff_invest]
       when :llm
-        %i[openai anthropic]
+        %i[openai anthropic gemini]
       else
-        %i[plaid_us plaid_eu github openai anthropic]
+        %i[plaid_us plaid_eu github openai anthropic gemini]
       end
     end
 end

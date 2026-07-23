@@ -14,6 +14,12 @@ class ApplicationJob < ActiveJob::Base
   self.enqueue_after_transaction_commit = true
 
   retry_on ActiveRecord::Deadlocked
+
+  # LLM provider rate limits (HTTP 429): back off and retry rather than dropping
+  # the work. Polynomial backoff spaces retries across minutes, which clears the
+  # per-minute quotas these APIs enforce. Every job inherits this.
+  retry_on Provider::RateLimitError, wait: :polynomially_longer, attempts: 5
+
   discard_on ActiveJob::DeserializationError
   queue_as :low_priority # default queue
 end

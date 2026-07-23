@@ -23,6 +23,8 @@ class Family::AutoMerchantDetector
     )
 
     unless result.success?
+      raise Provider::RateLimitError, result.error.message if Provider::RateLimitError.rate_limited?(result.error)
+
       Rails.logger.error("Failed to auto-detect merchants for family #{family.id}: #{result.error.message}")
       return 0
     end

@@ -20,7 +20,7 @@ class Rule::ActionExecutor::AutoDetectMerchants < Rule::ActionExecutor
 
     enrichable_transactions.in_batches(of: batch_size).each_with_index do |transactions, idx|
       Rails.logger.info("Scheduling auto-merchant-enrichment for batch #{idx + 1} of #{enrichable_transactions.count}")
-      rule.family.auto_detect_transaction_merchants_later(transactions, rule_run_id: rule_run&.id)
+      rule.family.auto_detect_transaction_merchants_later(transactions, rule_run_id: rule_run&.id, wait: bulk_enqueue_wait(idx))
       jobs_count += 1
     end
 

@@ -15,6 +15,13 @@ class Setting < RailsSettings::Base
   field :anthropic_access_token, type: :string, default: ENV["ANTHROPIC_ACCESS_TOKEN"].presence || ENV["ANTHROPIC_API_KEY"].presence
   field :anthropic_model, type: :string, default: ENV["ANTHROPIC_MODEL"]
   field :anthropic_base_url, type: :string, default: ENV["ANTHROPIC_BASE_URL"]
+  field :gemini_access_token, type: :string, default: ENV["GEMINI_ACCESS_TOKEN"].presence || ENV["GEMINI_API_KEY"].presence
+  field :gemini_model, type: :string, default: ENV["GEMINI_MODEL"]
+  field :gemini_base_url, type: :string, default: ENV["GEMINI_BASE_URL"]
+  # UI-layer defaults; the GEMINI_STREAMING / GEMINI_CONTEXT_CACHE env vars, when
+  # set, override these (and lock the toggle) — see Provider::Gemini.
+  field :gemini_streaming, type: :boolean, default: true
+  field :gemini_context_cache, type: :boolean, default: false
   field :llm_provider, type: :string, default: ENV.fetch("LLM_PROVIDER", "openai")
 
   # LLM token budget (applies to every outbound LLM call: chat, auto-categorize,

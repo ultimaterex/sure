@@ -1,0 +1,85 @@
+<div class="space-y-4">
+  <div>
+    <h2 class="font-medium mb-1"><%= t(".title") %></h2>
+    <% if ENV["GEMINI_ACCESS_TOKEN"].present? || ENV["GEMINI_API_KEY"].present? %>
+      <p class="text-sm text-secondary"><%= t(".env_configured_message") %></p>
+    <% else %>
+      <p class="text-secondary text-sm mb-4"><%= t(".description") %></p>
+    <% end %>
+  </div>
+
+  <%= styled_form_with model: Setting.new,
+                       url: settings_hosting_path,
+                       method: :patch,
+                       class: "space-y-4",
+                       data: {
+                         controller: "auto-submit-form",
+                         "auto-submit-form-trigger-event-value": "blur"
+                       } do |form| %>
+    <%= form.password_field :gemini_access_token,
+                            label: t(".access_token_label"),
+                            placeholder: t(".access_token_placeholder"),
+                            value: (Setting.gemini_access_token.present? ? "********" : nil),
+                            autocomplete: "off",
+                            autocapitalize: "none",
+                            spellcheck: "false",
+                            inputmode: "text",
+                            disabled: ENV["GEMINI_ACCESS_TOKEN"].present? || ENV["GEMINI_API_KEY"].present?,
+                            data: { "auto-submit-form-target": "auto" } %>
+
+    <%= form.text_field :gemini_base_url,
+                        label: t(".base_url_label"),
+                        placeholder: t(".base_url_placeholder"),
+                        value: @gemini_base_url_input || Setting.gemini_base_url,
+                        autocomplete: "off",
+                        autocapitalize: "none",
+                        spellcheck: "false",
+                        inputmode: "url",
+                        disabled: ENV["GEMINI_BASE_URL"].present?,
+                        data: { "auto-submit-form-target": "auto" } %>
+
+    <%= form.text_field :gemini_model,
+                        label: t(".model_label"),
+                        placeholder: t(".model_placeholder"),
+                        value: @gemini_model_input || Setting.gemini_model,
+                        autocomplete: "off",
+                        autocapitalize: "none",
+                        spellcheck: "false",
+                        inputmode: "text",
+                        disabled: ENV["GEMINI_MODEL"].present?,
+                        data: { "auto-submit-form-target": "auto" } %>
+    <p class="text-xs text-secondary mt-1"><%= t(".model_help") %></p>
+  <% end %>
+
+  <div class="flex items-center justify-between pt-2">
+    <div class="space-y-1">
+      <p class="text-sm"><%= t(".streaming_label") %></p>
+      <p class="text-secondary text-sm"><%= t(".streaming_description") %></p>
+    </div>
+    <%= styled_form_with model: Setting.new,
+                         url: settings_hosting_path,
+                         method: :patch,
+                         data: { controller: "auto-submit-form", auto_submit_form_trigger_event_value: "change" } do |form| %>
+      <%= form.toggle :gemini_streaming,
+                      checked: ENV["GEMINI_STREAMING"].present? ? ENV["GEMINI_STREAMING"] == "true" : Setting.gemini_streaming,
+                      disabled: ENV["GEMINI_STREAMING"].present?,
+                      data: { auto_submit_form_target: "auto" } %>
+    <% end %>
+  </div>
+
+  <div class="flex items-center justify-between pt-2">
+    <div class="space-y-1">
+      <p class="text-sm"><%= t(".context_cache_label") %></p>
+      <p class="text-secondary text-sm"><%= t(".context_cache_description") %></p>
+    </div>
+    <%= styled_form_with model: Setting.new,
+                         url: settings_hosting_path,
+                         method: :patch,
+                         data: { controller: "auto-submit-form", auto_submit_form_trigger_event_value: "change" } do |form| %>
+      <%= form.toggle :gemini_context_cache,
+                      checked: ENV["GEMINI_CONTEXT_CACHE"].present? ? ENV["GEMINI_CONTEXT_CACHE"] == "true" : Setting.gemini_context_cache,
+                      disabled: ENV["GEMINI_CONTEXT_CACHE"].present?,
+                      data: { auto_submit_form_target: "auto" } %>
+    <% end %>
+  </div>
+</div>
