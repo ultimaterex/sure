@@ -458,4 +458,22 @@ class Provider::GeminiTest < ActiveSupport::TestCase
     assert_equal 125, usage["total_tokens"]
     assert_equal 40, usage["cache_read_input_tokens"]
   end
+
+  # --- Bank statement extractor ----------------------------------------------
+  test "parse_amount preserves unknown/invalid amounts as nil instead of 0.0" do
+    extractor = Provider::Gemini::BankStatementExtractor.new(client: mock, model: "m", pdf_content: "x")
+
+    # Blank / non-numeric must not become a fabricated zero-value transaction
+    assert_nil extractor.send(:parse_amount, nil)
+    assert_nil extractor.send(:parse_amount, "")
+    assert_nil extractor.send(:parse_amount, "   ")
+    assert_nil extractor.send(:parse_amount, "N/A")
+    assert_nil extractor.send(:parse_amount, "-")
+
+    # Real values still parse, including currency-formatted strings
+    assert_equal(-45.99, extractor.send(:parse_amount, "-$45.99"))
+    assert_equal 1234.5, extractor.send(:parse_amount, "1,234.50")
+    assert_equal 0.0, extractor.send(:parse_amount, 0)
+    assert_equal 12.0, extractor.send(:parse_amount, "12")
+  end
 end
