@@ -133,6 +133,12 @@ class Provider::Gemini::BankStatementExtractor
       return nil if amount.nil?
       return amount.to_f if amount.is_a?(Numeric)
 
-      amount.to_s.gsub(/[^0-9.\-]/, "").to_f
+      # Strip currency symbols/thousands separators, but preserve "unknown" as
+      # nil: a blank or non-numeric value must not become a fabricated 0.0 that
+      # imports a phantom zero-value transaction.
+      cleaned = amount.to_s.gsub(/[^0-9.\-]/, "")
+      return nil unless cleaned.match?(/\d/)
+
+      Float(cleaned) rescue nil
     end
 end
